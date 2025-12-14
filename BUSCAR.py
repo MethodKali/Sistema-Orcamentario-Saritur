@@ -191,65 +191,17 @@ if st.sidebar.button("🔄 Recarregar Dados"):
     
 df_alta, df_emerg, df_backup = load_sheets(today_date_str)
 
-# ----------------------------------------------------
-# 1. STATUS GERAL (Adicionado de volta)
-# ----------------------------------------------------
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("📢 Status Geral")
-
-df_total = pd.concat([df_alta, df_emerg], ignore_index=True)
-
-if not df_total.empty and COL_STATUS in df_total.columns:
-    
-    aprovados = df_total[df_total[COL_STATUS].str.contains('APROVADO', case=False, na=False)].shape[0]
-    nao_aprovados = df_total[df_total[COL_STATUS].str.contains('NÃO APROVADO', case=False, na=False)].shape[0]
-    
-    col_side_1, col_side_2 = st.sidebar.columns(2)
-    
-    with col_side_1:
-         st.markdown(f"**✅ Aprovados**")
-         st.metric(label="Total", value=aprovados)
-
-    with col_side_2:
-        st.markdown(f"**❌ Não Aprovados**")
-        st.metric(label="Total", value=nao_aprovados)
-
 
 # ----------------------------------------------------
-# 2. GASTOS POR PERÍODO FIXO (Adicionado de volta)
+# 1. REMOVIDO: STATUS GERAL
+# 2. REMOVIDO: GASTOS POR PERÍODO FIXO
 # ----------------------------------------------------
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("📊 Gastos Por Período (Últimos dias)")
-
-today = datetime.datetime.now(pytz.timezone('America/Sao_Paulo')).date()
-
-start_7_days = today - timedelta(days=7)
-start_30_days = today - timedelta(days=30)
-start_90_days = today - timedelta(days=90)
-
-sum_7_alta = sum_between(df_alta, start_7_days, today)
-sum_7_emerg = sum_between(df_emerg, start_7_days, today)
-sum_30_alta = sum_between(df_alta, start_30_days, today)
-sum_30_emerg = sum_between(df_emerg, start_30_days, today)
-sum_90_alta = sum_between(df_alta, start_90_days, today)
-sum_90_emerg = sum_between(df_emerg, start_90_days, today)
-
-
-data_metrics = {
-    'Período': ['7 Dias', '30 Dias', '90 Dias'],
-    'ALTA': [br_money(sum_7_alta), br_money(sum_30_alta), br_money(sum_90_alta)],
-    'EMERGENCIAL': [br_money(sum_7_emerg), br_money(sum_30_emerg), br_money(sum_90_emerg)]
-}
-
-df_metrics = pd.DataFrame(data_metrics)
-st.sidebar.dataframe(df_metrics.set_index('Período'), use_container_width=True)
 
 # ----------------------------------------------------
 # 3. FILTRO PERSONALIZADO POR INTERVALO (MANTIDO)
 # ----------------------------------------------------
-
+st.sidebar.markdown("---") # Adiciona um separador após o botão Recarregar/Logo
 st.sidebar.header("📊 Filtro por período")
 
 start_date = st.sidebar.date_input("Data inicial", datetime.date.today() - datetime.timedelta(days=30))
@@ -267,6 +219,7 @@ st.sidebar.success(f"EMERGENCIAL: {br_money(total_emerg)}")
 # 4. LÓGICA DE ALERTAS DE STATUS (MANTIDO)
 # ----------------------------------------------------
 
+st.sidebar.markdown("---") # Separador antes dos Alertas
 st.sidebar.markdown("### 🔔 Alertas de Status - ALTA")
 
 hoje = pd.to_datetime(today_date_tz).normalize() 
@@ -369,7 +322,7 @@ st.subheader("🔍 Situação da Solicitação/Pedido")
 pedido_input = st.text_input("Digite o número do pedido:")
 
 def show_result(row, sheet_name):
-    st.write(f"📁 **Origem:** {sheet_name}") # Adiciona a origem
+    st.write(f"📁 **Origem:** {sheet_name}") 
     st.write(f"📅 **Previsão de pagamento:** {row.get(COL_DATA).strftime('%d/%m/%Y')}") 
     st.write(f"📌 **Status:** {row.get(COL_STATUS)}")
     st.write(f"💰 **Valor:** {br_money(row.get(COL_VALOR))}")
