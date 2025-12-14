@@ -1,18 +1,20 @@
+# BACKLOG.py
 import streamlit as st
 import re
 import pandas as pd
 import gspread 
 from typing import List, Dict, Union
 from datetime import date, timedelta
-# LINHA REMOVIDA: A importação abaixo causava conflito ou erro no ambiente do Cloud
+# Importação removida para evitar o AttributeError:
 # import gspread.exceptions 
 import calendar # Para manipular dias da semana
 
 # Importações necessárias para autenticação no Streamlit Cloud
 import json 
 from oauth2client.service_account import ServiceAccountCredentials
-import os # Necessário para verificar se está no Streamlit Cloud
-
+# Remoção do SCOPE que era importado de forma incorreta:
+# from oauth2client.service_account import SCOPE 
+import os 
 
 # --- CONFIGURAÇÃO ---
 PLANILHA_NOME = "Controle Orçamentário Diário V2" 
@@ -22,6 +24,12 @@ COLUNA_CARRO = 'CARRO | UTILIZAÇÃO'
 
 # LISTA DAS ABAS A SEREM CARREGADAS
 ABAS_PRINCIPAIS = ['ALTA', 'EMERGENCIAL']
+
+# DEFINIÇÃO DO SCOPE DE PERMISSÃO (CORREÇÃO PARA EVITAR ERRO DE ATTRIBUTE)
+GOOGLE_SHEET_SCOPES = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive",
+]
 
 # LISTA DOS CARROS CADASTRADOS
 LISTA_CARROS_CADASTRO = [
@@ -71,10 +79,8 @@ def calculate_backup_sheet_name() -> str:
         
     else:
         # Não é dia de atualização: Buscamos a SEMANA RETRASADA.
-        # Encontra a Sexta-feira da semana retrasada (Sexta passada - 7 dias)
         
         # Primeiro, encontra o último dia da semana passada (Sexta)
-        # today.weekday() = 5 (Sábado) ou 6 (Domingo) ou 1-4 (Terça-Sexta)
         days_since_last_friday = (today.weekday() - calendar.FRIDAY + 7) % 7 
         
         # Se for sábado (5), days_since_last_friday é 0. Se for domingo (6), é 1.
@@ -118,11 +124,11 @@ def load_data(sheet_name: str) -> Dict[str, pd.DataFrame]:
         
         if creds_json:
             # Autenticação via Streamlit Secrets
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, gspread.auth.SCOPES)
+            # CORREÇÃO AQUI: Usando a lista de SCOPES
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, GOOGLE_SHEET_SCOPES)
             gc = gspread.authorize(creds)
         else:
             # Fallback para execução local (caso não use secrets)
-            # Requer ServiceAccountCredentials importado do oauth2client.service_account
             gc = gspread.service_account(filename="acesso.json")
             
     except Exception as e:
@@ -157,7 +163,7 @@ def load_data(sheet_name: str) -> Dict[str, pd.DataFrame]:
                 df['PEDIDO'] = df['PEDIDO'].astype(str)
                 data[tab] = df
                 
-            # MUDANÇA AQUI: Acessando a exceção diretamente do gspread
+            # CORREÇÃO AQUI: Acessando a exceção diretamente do gspread (sem .exceptions)
             except gspread.WorksheetNotFound: 
                 # É muito comum que a aba de backup ainda não exista ou tenha o nome errado
                 if tab == BACKUP_SHEET_NAME:
@@ -173,7 +179,7 @@ def load_data(sheet_name: str) -> Dict[str, pd.DataFrame]:
         
         return data
         
-    # MUDANÇA AQUI: Acessando a exceção diretamente do gspread
+    # CORREÇÃO AQUI: Acessando a exceção diretamente do gspread (sem .exceptions)
     except gspread.FileAccessError:
         st.error(f"Erro de Acesso: Verifique se o e-mail da conta de serviço possui permissão de leitura na planilha '{sheet_name}'.")
         return None
@@ -185,11 +191,8 @@ def load_data(sheet_name: str) -> Dict[str, pd.DataFrame]:
 
 
 # ----------------------------------------------------
-# 2. FUNÇÕES DE BUSCA E CONTROLE DE ESTADO
+# 2. FUNÇÕES DE BUSCA E CONTROLE DE ESTADO (MANTIDAS)
 # ----------------------------------------------------
-
-# Funções initialize_state, search_pedido, perform_search, handle_search, 
-# remove_last_search, clear_search_history (MANTIDAS)
 
 def initialize_state():
     if 'search_history' not in st.session_state:
@@ -296,7 +299,7 @@ def clear_search_history():
 
 
 # ----------------------------------------------------
-# 3. FUNÇÕES DE ESTILO E EXIBIÇÃO (Permanecem iguais)
+# 3. FUNÇÕES DE ESTILO E EXIBIÇÃO (MANTIDAS)
 # ----------------------------------------------------
 
 def apply_text_color_by_status(row):
