@@ -4,6 +4,7 @@ import pandas as pd
 import gspread 
 from typing import List, Dict, Union
 from datetime import date, timedelta
+import gspread.exceptions
 import calendar # Para manipular dias da semana
 
 # --- CONFIGURAÇÃO ---
