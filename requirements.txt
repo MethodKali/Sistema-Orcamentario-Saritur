@@ -1,12 +1,6 @@
 streamlit
 pandas
-datetime
-re
 altair
 pytz
 gspread
 oauth2client
-calendar
-json
-typing
-uuid
