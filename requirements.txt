@@ -1,6 +1,0 @@
-streamlit
-pandas
-gspread
-oauth2client
-altair
-pytz
