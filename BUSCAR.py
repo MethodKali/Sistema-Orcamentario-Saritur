@@ -216,20 +216,22 @@ st.sidebar.success(f"EMERGENCIAL: {br_money(total_emerg)}")
 
 
 # ----------------------------------------------------
-# 4. LÓGICA DE ALERTAS DE STATUS (MANTIDO)
+# 4. LÓGICA DE ALERTAS DE STATUS (CORRIGIDO)
 # ----------------------------------------------------
 
 st.sidebar.markdown("---") # Separador antes dos Alertas
 st.sidebar.markdown("### 🔔 Alertas de Status - ALTA")
 
+# Datas
 hoje = pd.to_datetime(today_date_tz).normalize() 
 data_amanha = hoje + datetime.timedelta(days=1)
-data_depois_de_amanha = hoje + datetime.timedelta(days=2) 
+# data_depois_de_amanha = hoje + datetime.timedelta(days=2) # Não precisamos mais dessa variável
+
 data_amanha_br = data_amanha.strftime('%d/%m') 
 
-qtde_nao_aprovada_pendente = 0
+qtde_nao_aprovada_total = 0 # CORREÇÃO: Variável renomeada para ser o total de amanhã em diante
 qtde_nao_aprovada_amanha = 0
-qtde_aprovada_pendente = 0
+qtde_aprovada_total = 0      # CORREÇÃO: Variável renomeada para ser o total de amanhã em diante
 qtde_aprovada_amanha = 0
 
 if COL_STATUS in df_alta.columns and COL_DATA in df_alta.columns:
@@ -237,41 +239,40 @@ if COL_STATUS in df_alta.columns and COL_DATA in df_alta.columns:
     df_alta["STATUS_CLEAN"] = df_alta[COL_STATUS].astype(str).str.strip().str.upper()
     df_alta['DATA_ONLY'] = df_alta[COL_DATA].dt.normalize()
 
-    df_pendente_amanha = df_alta[
+    # 1. Base para 'Amanhã' (data_amanha)
+    df_base_amanha = df_alta[
         (df_alta['DATA_ONLY'] == data_amanha) & 
         (pd.notna(df_alta['DATA_ONLY']))
     ].copy()
     
-    df_pendente_futuro = df_alta[
-        (df_alta['DATA_ONLY'] >= data_depois_de_amanha) & 
+    # 2. Base para 'Total Pendente' (Amanhã e dias seguintes)
+    # CORREÇÃO: Filtramos para datas MAIORES OU IGUAIS a amanhã.
+    df_base_total = df_alta[
+        (df_alta['DATA_ONLY'] >= data_amanha) & 
         (pd.notna(df_alta['DATA_ONLY']))
     ].copy()
     
     
-    df_nao_aprovada_amanha_base = df_pendente_amanha[df_pendente_amanha["STATUS_CLEAN"] == "NÃO APROVADA"]
-    qtde_nao_aprovada_amanha = df_nao_aprovada_amanha_base.shape[0]
+    # Cálculos para NÃO APROVADAS
+    qtde_nao_aprovada_amanha = df_base_amanha[df_base_amanha["STATUS_CLEAN"] == "NÃO APROVADA"].shape[0]
+    qtde_nao_aprovada_total = df_base_total[df_base_total["STATUS_CLEAN"] == "NÃO APROVADA"].shape[0] # Usa a nova base
 
-    df_nao_aprovada_futuro_base = df_pendente_futuro[df_pendente_futuro["STATUS_CLEAN"] == "NÃO APROVADA"]
-    qtde_nao_aprovada_pendente = df_nao_aprovada_futuro_base.shape[0]
     
-    
-    df_aprovada_amanha_base = df_pendente_amanha[df_pendente_amanha["STATUS_CLEAN"] == "APROVADA"]
-    qtde_aprovada_amanha = df_aprovada_amanha_base.shape[0]
-
-    df_aprovada_futuro_base = df_pendente_futuro[df_pendente_futuro["STATUS_CLEAN"] == "APROVADA"]
-    qtde_aprovada_pendente = df_aprovada_futuro_base.shape[0]
+    # Cálculos para APROVADAS
+    qtde_aprovada_amanha = df_base_amanha[df_base_amanha["STATUS_CLEAN"] == "APROVADA"].shape[0]
+    qtde_aprovada_total = df_base_total[df_base_total["STATUS_CLEAN"] == "APROVADA"].shape[0] # Usa a nova base
 
 
-# CONSTRUÇÃO E EXIBIÇÃO DOS ALERTAS
+# CONSTRUÇÃO E EXIBIÇÃO DOS ALERTAS (Substituímos 'pendentes' por 'total')
 mensagem_nao_aprovada = (
-    f"Existem **{qtde_nao_aprovada_pendente}** solicitações NÃO APROVADAS pendentes, "
+    f"Existem **{qtde_nao_aprovada_total}** solicitações NÃO APROVADAS futuras, "
     f"sendo **{qtde_nao_aprovada_amanha}** para amanhã ({data_amanha_br}). "
     "**Favor atualizar a planilha!**"
 )
 st.sidebar.error(mensagem_nao_aprovada, icon="🚨")
 
 mensagem_aprovada = (
-    f"Existem **{qtde_aprovada_pendente}** solicitações APROVADAS pendentes, "
+    f"Existem **{qtde_aprovada_total}** solicitações APROVADAS futuras, "
     f"sendo **{qtde_aprovada_amanha}** para amanhã ({data_amanha_br}). "
     "Acompanhe o processo de PEDIDO e atualize a planilha!"
 )
