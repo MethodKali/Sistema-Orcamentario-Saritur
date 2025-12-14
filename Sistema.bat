@@ -1,1 +1,0 @@
-streamlit run /home/deep_writer/Downloads/Saritur/BUSCAR.py
