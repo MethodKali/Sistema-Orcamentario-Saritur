@@ -4,12 +4,19 @@ import pandas as pd
 import gspread 
 from typing import List, Dict, Union
 from datetime import date, timedelta
-import gspread.exceptions
+# LINHA REMOVIDA: A importação abaixo causava conflito ou erro no ambiente do Cloud
+# import gspread.exceptions 
 import calendar # Para manipular dias da semana
+
+# Importações necessárias para autenticação no Streamlit Cloud
+import json 
+from oauth2client.service_account import ServiceAccountCredentials
+import os # Necessário para verificar se está no Streamlit Cloud
+
 
 # --- CONFIGURAÇÃO ---
 PLANILHA_NOME = "Controle Orçamentário Diário V2" 
-CREDENTIALS_FILE = "acesso.json"
+# CREDENTIALS_FILE = "acesso.json" <-- NÃO USADO MAIS NO CLOUD
 COLUNAS_DADOS = ['PEDIDO', 'DATA', 'CARRO | UTILIZAÇÃO', 'STATUS']
 COLUNA_CARRO = 'CARRO | UTILIZAÇÃO' 
 
@@ -104,8 +111,26 @@ def load_data(sheet_name: str) -> Dict[str, pd.DataFrame]:
     BACKUP_SHEET_NAME = calculate_backup_sheet_name()
     ABAS_A_BUSCAR = ABAS_PRINCIPAIS + [BACKUP_SHEET_NAME]
     
+    # --- AUTENTICAÇÃO ATUALIZADA PARA O STREAMLIT CLOUD ---
     try:
-        gc = gspread.service_account(filename=CREDENTIALS_FILE)
+        # Tenta carregar as credenciais dos segredos do Streamlit
+        creds_json = st.secrets.get("google_sheets_service_account")
+        
+        if creds_json:
+            # Autenticação via Streamlit Secrets
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, gspread.auth.SCOPES)
+            gc = gspread.authorize(creds)
+        else:
+            # Fallback para execução local (caso não use secrets)
+            # Requer ServiceAccountCredentials importado do oauth2client.service_account
+            gc = gspread.service_account(filename="acesso.json")
+            
+    except Exception as e:
+        st.error(f"Erro ao autenticar no Google Sheets (Verifique Secrets/acesso.json). Erro: {e}")
+        return None
+    # ----------------------------------------------------
+    
+    try:
         sh = gc.open(sheet_name)
         
         for tab in ABAS_A_BUSCAR:
@@ -117,6 +142,7 @@ def load_data(sheet_name: str) -> Dict[str, pd.DataFrame]:
                     st.warning(f"A aba '{tab}' está vazia ou não tem cabeçalho.")
                     continue
 
+                # Pula a primeira linha (cabeçalho da planilha V2)
                 header = list_of_lists[1]
                 data_rows = list_of_lists[2:] 
                 df = pd.DataFrame(data_rows, columns=header)
@@ -131,7 +157,8 @@ def load_data(sheet_name: str) -> Dict[str, pd.DataFrame]:
                 df['PEDIDO'] = df['PEDIDO'].astype(str)
                 data[tab] = df
                 
-            except gspread.WorksheetNotFound:
+            # MUDANÇA AQUI: Acessando a exceção diretamente do gspread
+            except gspread.WorksheetNotFound: 
                 # É muito comum que a aba de backup ainda não exista ou tenha o nome errado
                 if tab == BACKUP_SHEET_NAME:
                     st.warning(f"Aviso: Aba de Backup esperada '{BACKUP_SHEET_NAME}' não foi encontrada. Ignorando esta aba na busca.")
@@ -146,14 +173,14 @@ def load_data(sheet_name: str) -> Dict[str, pd.DataFrame]:
         
         return data
         
-    except gspread.exceptions.FileAccessError:
+    # MUDANÇA AQUI: Acessando a exceção diretamente do gspread
+    except gspread.FileAccessError:
         st.error(f"Erro de Acesso: Verifique se o e-mail da conta de serviço possui permissão de leitura na planilha '{sheet_name}'.")
         return None
-    except FileNotFoundError:
-        st.error(f"Erro: O arquivo de credenciais '{CREDENTIALS_FILE}' não foi encontrado.")
-        return None
+        
     except Exception as e:
-        st.error(f"Ocorreu um erro ao carregar os dados: {e}")
+        # Esta exceção captura erros genéricos, incluindo a falha de conexão do gspread.
+        st.error(f"Ocorreu um erro inesperado ao carregar os dados: {e}")
         return None
 
 
@@ -162,8 +189,7 @@ def load_data(sheet_name: str) -> Dict[str, pd.DataFrame]:
 # ----------------------------------------------------
 
 # Funções initialize_state, search_pedido, perform_search, handle_search, 
-# remove_last_search, clear_search_history permanecem iguais, pois elas operam
-# sobre o dicionário `data` que agora inclui a aba de backup.
+# remove_last_search, clear_search_history (MANTIDAS)
 
 def initialize_state():
     if 'search_history' not in st.session_state:
