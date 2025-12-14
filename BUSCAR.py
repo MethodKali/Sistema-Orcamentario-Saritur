@@ -1,4 +1,3 @@
-# BUSCAR.py
 import streamlit as st
 import pandas as pd
 import datetime
@@ -8,11 +7,10 @@ import pytz
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import date, timedelta
-import calendar # Adicionado para manipulação de datas
+import calendar 
 import json
 
 # --- CONFIGURAÇÃO DE ACESSO E LIMITES ---
-# ESTA LISTA DE SCOPE JÁ ESTAVA CORRETA NO BUSCAR.py
 SCOPE = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive",
@@ -79,24 +77,13 @@ def safe_load(df):
 # -----------------------
 
 def calculate_backup_sheet_name() -> str:
-    """
-    Calcula o nome da aba de backup baseando-se na data atual (dd.mm a dd.mm).
-    Regras: 
-    1. Se hoje for Segunda-feira, busca a Semana Passada.
-    2. Caso contrário, busca a Semana Retrasada.
-    """
     today = date.today()
     is_update_day = today.weekday() == calendar.MONDAY
 
     if is_update_day:
-        # É dia de atualização (Segunda): Buscamos a SEMANA PASSADA.
         last_friday = today - timedelta(days=3) 
         end_date = last_friday
-        
     else:
-        # Não é dia de atualização: Buscamos a SEMANA RETRASADA.
-        
-        # Encontra a Sexta-feira da semana retrasada
         days_since_last_friday = (today.weekday() - calendar.FRIDAY + 7) % 7 
         
         if today.weekday() in [calendar.SATURDAY, calendar.SUNDAY]:
@@ -106,43 +93,34 @@ def calculate_backup_sheet_name() -> str:
             
         end_date = last_friday_passada - timedelta(days=7) 
 
-    
     ultimo_dia_util = end_date
     primeiro_dia_util = ultimo_dia_util - timedelta(days=4)
 
     return f"{primeiro_dia_util.strftime('%d.%m')} a {ultimo_dia_util.strftime('%d.%m')}"
 
 
+# -----------------------
+# FUNÇÃO DE CARREGAMENTO DE DADOS (MANTIDA)
+# -----------------------
+
 @st.cache_data(ttl=300)
-def load_sheets(today_str): 
-    
+def load_sheets(today_str):
     gc = None
-    # -----------------------------------------------------------------
-    # CORREÇÃO AQUI: Prioriza st.secrets para o Cloud
-    # -----------------------------------------------------------------
     try:
-        # 1. Tenta carregar credenciais do Streamlit Secrets (Cloud)
+        # Tenta carregar credenciais das Secrets (para Streamlit Cloud)
         creds_json = st.secrets.get("google_sheets_service_account")
         
         if creds_json:
-             # Usa a lista SCOPE correta definida no topo
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, SCOPE)
             gc = gspread.authorize(creds)
         else:
-            # 2. Fallback para execução local (acesso.json)
+            # Caso não encontre nas Secrets, tenta o arquivo local
             creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, SCOPE)
             gc = gspread.authorize(creds)
             
-    except KeyError:
-        # Ocorre se 'google_sheets_service_account' não estiver em st.secrets
-        st.error("ERRO: As credenciais do Google Sheets não foram configuradas nos segredos do Streamlit.")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-        
     except Exception as e:
-        # Captura qualquer erro de autenticação (incluindo FileAccessError/FileNotFound localmente)
-        st.error(f"Erro ao autenticar credenciais no Streamlit Cloud. Verifique as Secrets. Erro: {e}")
+        st.error(f"Erro ao autenticar credenciais. Erro: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-    # -----------------------------------------------------------------
     
     try:
         sh = gc.open_by_key(SPREADSHEET_ID)
@@ -154,7 +132,6 @@ def load_sheets(today_str):
     def load_sheet_as_df(sheet_name):
         try:
             data = sh.worksheet(sheet_name).get_all_values() 
-            # Lógica para limpar e garantir cabeçalhos únicos
             raw_headers = [h.strip().upper() for h in data[1]]
             seen_headers = {}
             unique_headers = []
@@ -175,7 +152,7 @@ def load_sheets(today_str):
             return safe_load(df) 
         
         except gspread.WorksheetNotFound:
-            st.warning(f"Aviso: Aba '{sheet_name}' não encontrada. Retornando DataFrame vazio.")
+            # st.warning(f"Aviso: Aba '{sheet_name}' não encontrada. Retornando DataFrame vazio.")
             return pd.DataFrame()
         except Exception as e:
             st.error(f"Erro ao carregar aba {sheet_name}. Erro: {e}")
@@ -184,7 +161,6 @@ def load_sheets(today_str):
     df_alta = load_sheet_as_df("ALTA")
     df_emerg = load_sheet_as_df("EMERGENCIAL")
     
-    # --- NOVO: Carregar a aba de backup calculada ---
     BACKUP_SHEET_NAME = calculate_backup_sheet_name()
     df_backup = load_sheet_as_df(BACKUP_SHEET_NAME)
 
@@ -201,7 +177,7 @@ def sum_between(df, start, end):
 
 
 # -----------------------
-# APP STREAMLIT (MANTIDO)
+# APP STREAMLIT - INÍCIO DA SIDEBAR E CARREGAMENTO
 # -----------------------
 st.sidebar.image("saritur1.png")
 
@@ -214,6 +190,168 @@ if st.sidebar.button("🔄 Recarregar Dados"):
     st.success("Cache limpo! Recarregando dados...")
     
 df_alta, df_emerg, df_backup = load_sheets(today_date_str)
+
+# ----------------------------------------------------
+# 1. STATUS GERAL (Adicionado de volta)
+# ----------------------------------------------------
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("📢 Status Geral")
+
+df_total = pd.concat([df_alta, df_emerg], ignore_index=True)
+
+if not df_total.empty and COL_STATUS in df_total.columns:
+    
+    aprovados = df_total[df_total[COL_STATUS].str.contains('APROVADO', case=False, na=False)].shape[0]
+    nao_aprovados = df_total[df_total[COL_STATUS].str.contains('NÃO APROVADO', case=False, na=False)].shape[0]
+    
+    col_side_1, col_side_2 = st.sidebar.columns(2)
+    
+    with col_side_1:
+         st.markdown(f"**✅ Aprovados**")
+         st.metric(label="Total", value=aprovados)
+
+    with col_side_2:
+        st.markdown(f"**❌ Não Aprovados**")
+        st.metric(label="Total", value=nao_aprovados)
+
+
+# ----------------------------------------------------
+# 2. GASTOS POR PERÍODO FIXO (Adicionado de volta)
+# ----------------------------------------------------
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("📊 Gastos Por Período (Últimos dias)")
+
+today = datetime.datetime.now(pytz.timezone('America/Sao_Paulo')).date()
+
+start_7_days = today - timedelta(days=7)
+start_30_days = today - timedelta(days=30)
+start_90_days = today - timedelta(days=90)
+
+sum_7_alta = sum_between(df_alta, start_7_days, today)
+sum_7_emerg = sum_between(df_emerg, start_7_days, today)
+sum_30_alta = sum_between(df_alta, start_30_days, today)
+sum_30_emerg = sum_between(df_emerg, start_30_days, today)
+sum_90_alta = sum_between(df_alta, start_90_days, today)
+sum_90_emerg = sum_between(df_emerg, start_90_days, today)
+
+
+data_metrics = {
+    'Período': ['7 Dias', '30 Dias', '90 Dias'],
+    'ALTA': [br_money(sum_7_alta), br_money(sum_30_alta), br_money(sum_90_alta)],
+    'EMERGENCIAL': [br_money(sum_7_emerg), br_money(sum_30_emerg), br_money(sum_90_emerg)]
+}
+
+df_metrics = pd.DataFrame(data_metrics)
+st.sidebar.dataframe(df_metrics.set_index('Período'), use_container_width=True)
+
+# ----------------------------------------------------
+# 3. FILTRO PERSONALIZADO POR INTERVALO (MANTIDO)
+# ----------------------------------------------------
+
+st.sidebar.header("📊 Filtro por período")
+
+start_date = st.sidebar.date_input("Data inicial", datetime.date.today() - datetime.timedelta(days=30))
+end_date = st.sidebar.date_input("Data final", datetime.date.today())
+
+total_alta = sum_between(df_alta, start_date, end_date)
+total_emerg = sum_between(df_emerg, start_date, end_date)
+
+st.sidebar.markdown("### 💵 Totais filtrados:")
+st.sidebar.success(f"ALTA: {br_money(total_alta)}") 
+st.sidebar.success(f"EMERGENCIAL: {br_money(total_emerg)}")
+
+
+# ----------------------------------------------------
+# 4. LÓGICA DE ALERTAS DE STATUS (MANTIDO)
+# ----------------------------------------------------
+
+st.sidebar.markdown("### 🔔 Alertas de Status - ALTA")
+
+hoje = pd.to_datetime(today_date_tz).normalize() 
+data_amanha = hoje + datetime.timedelta(days=1)
+data_depois_de_amanha = hoje + datetime.timedelta(days=2) 
+data_amanha_br = data_amanha.strftime('%d/%m') 
+
+qtde_nao_aprovada_pendente = 0
+qtde_nao_aprovada_amanha = 0
+qtde_aprovada_pendente = 0
+qtde_aprovada_amanha = 0
+
+if COL_STATUS in df_alta.columns and COL_DATA in df_alta.columns:
+    
+    df_alta["STATUS_CLEAN"] = df_alta[COL_STATUS].astype(str).str.strip().str.upper()
+    df_alta['DATA_ONLY'] = df_alta[COL_DATA].dt.normalize()
+
+    df_pendente_amanha = df_alta[
+        (df_alta['DATA_ONLY'] == data_amanha) & 
+        (pd.notna(df_alta['DATA_ONLY']))
+    ].copy()
+    
+    df_pendente_futuro = df_alta[
+        (df_alta['DATA_ONLY'] >= data_depois_de_amanha) & 
+        (pd.notna(df_alta['DATA_ONLY']))
+    ].copy()
+    
+    
+    df_nao_aprovada_amanha_base = df_pendente_amanha[df_pendente_amanha["STATUS_CLEAN"] == "NÃO APROVADA"]
+    qtde_nao_aprovada_amanha = df_nao_aprovada_amanha_base.shape[0]
+
+    df_nao_aprovada_futuro_base = df_pendente_futuro[df_pendente_futuro["STATUS_CLEAN"] == "NÃO APROVADA"]
+    qtde_nao_aprovada_pendente = df_nao_aprovada_futuro_base.shape[0]
+    
+    
+    df_aprovada_amanha_base = df_pendente_amanha[df_pendente_amanha["STATUS_CLEAN"] == "APROVADA"]
+    qtde_aprovada_amanha = df_aprovada_amanha_base.shape[0]
+
+    df_aprovada_futuro_base = df_pendente_futuro[df_pendente_futuro["STATUS_CLEAN"] == "APROVADA"]
+    qtde_aprovada_pendente = df_aprovada_futuro_base.shape[0]
+
+
+# CONSTRUÇÃO E EXIBIÇÃO DOS ALERTAS
+mensagem_nao_aprovada = (
+    f"Existem **{qtde_nao_aprovada_pendente}** solicitações NÃO APROVADAS pendentes, "
+    f"sendo **{qtde_nao_aprovada_amanha}** para amanhã ({data_amanha_br}). "
+    "**Favor atualizar a planilha!**"
+)
+st.sidebar.error(mensagem_nao_aprovada, icon="🚨")
+
+mensagem_aprovada = (
+    f"Existem **{qtde_aprovada_pendente}** solicitações APROVADAS pendentes, "
+    f"sendo **{qtde_aprovada_amanha}** para amanhã ({data_amanha_br}). "
+    "Acompanhe o processo de PEDIDO e atualize a planilha!"
+)
+st.sidebar.warning(mensagem_aprovada, icon="⚠️")
+
+# ----------------------------------------------------
+# 5. RODAPÉ (MANTIDO)
+# ----------------------------------------------------
+
+st.sidebar.markdown("---") 
+
+st.sidebar.markdown(
+    """
+    <p style='font-size: 11px; color: #808489; text-align: center;'>
+    Desenvolvido por Kerles Alves - Ass. Suprimentos
+    </p>
+    """,
+    unsafe_allow_html=True
+)
+
+st.sidebar.markdown(
+    """
+    <p style='font-size: 11px; color: #808489; text-align: center;'>
+    Unidade Jardim Montanhês (BH) - Saritur Santa Rita Transporte Urbano e Rodoviário
+    </p>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# -----------------------
+# CORPO PRINCIPAL DO APP (MANTIDO)
+# -----------------------
 
 st.title("Sistema de Consulta de Pedidos – *ALTA*, *EMERGENCIAL* e *BACKUP*")
 
@@ -244,10 +382,6 @@ def show_result(row, sheet_name):
 if pedido_input:
     pid = pedido_input.strip().upper() 
     
-    # ----------------------------------------------------
-    # ATUALIZADO: Pesquisa em ALTA, EMERGENCIAL e BACKUP
-    # ----------------------------------------------------
-    
     def search_df(df, pid):
         if COL_PEDIDO in df.columns and not df.empty:
             return df[df[COL_PEDIDO].astype(str).str.strip().str.upper() == pid]
@@ -255,7 +389,7 @@ if pedido_input:
 
     res_alta = search_df(df_alta, pid)
     res_emerg = search_df(df_emerg, pid)
-    res_backup = search_df(df_backup, pid) # NOVO: Pesquisa na aba de backup
+    res_backup = search_df(df_backup, pid) 
 
     if res_alta.empty and res_emerg.empty and res_backup.empty:
         st.warning(f"❌ Pedido '{pedido_input}' não encontrado em nenhuma aba.")
@@ -289,7 +423,7 @@ if data_busca:
     
     mask_emerg = pd.notna(df_emerg[COL_DATA]) & (df_emerg[COL_DATA] == data_busca_dt)
     emerg_filtrado = df_emerg[mask_emerg].copy()
-
+    
     total_valor_dia_alta = alta_filtrado[COL_VALOR].sum()
     total_valor_dia_emerg = emerg_filtrado[COL_VALOR].sum()
     total_geral = total_valor_dia_alta + total_valor_dia_emerg
@@ -383,13 +517,13 @@ if data_busca:
         emerg_filtrado_show[COL_VALOR] = emerg_filtrado_show[COL_VALOR].apply(br_money)
         cols_final_emerg = COLS_BASE[:1] + [COL_VALOR] + COLS_BASE[1:]
         st.dataframe(emerg_filtrado_show[cols_final_emerg], hide_index=True)
-        
+
         st.markdown("#### 📈 EMERGENCIAL: Top 10 Pedidos por Valor")
         
         top_emerg = emerg_filtrado.sort_values(by=COL_VALOR, ascending=False).head(10).copy()
         top_emerg['VALOR_TEXTO'] = top_emerg[COL_VALOR].apply(lambda x: f'R$ {x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."))
-
-        chart_bar_emerg = alt.Chart(top_emerg).mark_bar(color='rgb(219, 68, 55)').encode(
+        
+        chart_bar_emerg = alt.Chart(top_emerg).mark_bar(color='red').encode(
             x=alt.X(COL_VALOR, title='', axis=None), 
             y=alt.Y(COL_PEDIDO, 
                     sort='-x', 
@@ -403,7 +537,7 @@ if data_busca:
             baseline='middle',
             dx=5 
         ).encode(
-            x=alt.X(COL_VALOR, stack=None), 
+            x=alt.X(COL_VALOR, stack=None),
             y=alt.Y(COL_PEDIDO, sort='-x'),
             text=alt.Text('VALOR_TEXTO'), 
             color=alt.value('#CCCCCC')
@@ -411,7 +545,57 @@ if data_busca:
         
         chart_emerg = (chart_bar_emerg + chart_text_emerg).properties(
             title=data_busca_dt.strftime('%d/%m/%Y')
-        ).interactive() 
+        ).interactive()
         
         st.altair_chart(chart_emerg, use_container_width=True)
-        st.markdown("---")
+
+
+    # =================================================================
+    # BLOCO 3: UNIDADES SUPRIDAS E GASTOS (MANTIDO)
+    # =================================================================
+    
+    if not alta_filtrado.empty or not emerg_filtrado.empty:
+        
+        df_combinado = pd.concat([alta_filtrado, emerg_filtrado], ignore_index=True)
+        
+        df_filtrado_pedido = df_combinado[
+            df_combinado[COL_STATUS].astype(str).str.strip().str.upper() == "PEDIDO"
+        ].copy()
+        
+        
+        if not df_filtrado_pedido.empty:
+            
+            gastos_por_unidade = df_filtrado_pedido.groupby(COL_UNIDADE)[COL_VALOR].sum().reset_index()
+            gastos_por_unidade.columns = [COL_UNIDADE, "TOTAL GASTO"]
+            gastos_por_unidade = gastos_por_unidade.sort_values(by="TOTAL GASTO", ascending=False)
+            
+            gastos_show = gastos_por_unidade.copy()
+            gastos_show["TOTAL GASTO_BR"] = gastos_show["TOTAL GASTO"].apply(br_money)
+
+            st.markdown("---") 
+            st.subheader(f"🏢 Gasto por Unidade Suprida (Status: PEDIDO) em {data_busca_dt.strftime('%d/%m/%Y')}")
+            
+            for index, row in gastos_show.iterrows():
+                unidade = row[COL_UNIDADE]
+                total_gasto = row["TOTAL GASTO_BR"]
+                
+                st.markdown(
+                    f"""
+                    <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #282828;">
+                        <span style='font-size: 15px; font-weight: 500; color: white;'>
+                            {unidade}
+                        </span>
+                        <span style='font-size: 15px; font-weight: 500; color: #AAAAAA;'>
+                            {total_gasto}
+                        </span>
+                    </div>
+                    """, 
+                    unsafe_allow_html=True
+                )
+        
+        else:
+            st.info(f"Nenhum pedido com status 'PEDIDO' encontrado para calcular gastos por unidade em {data_busca_dt.strftime('%d/%m/%Y')}.")
+
+
+    else:
+        st.info(f"Nenhum pedido encontrado para calcular gastos por unidade em {data_busca_dt.strftime('%d/%m/%Y')}.")
