@@ -208,7 +208,7 @@ data_amanha_br = data_amanha.strftime('%d/%m')
 
 qtde_nao_aprovada_total = 0 
 qtde_nao_aprovada_amanha = 0
-qtde_aprovada_total = 0      
+qtde_aprovada_total = 0 
 qtde_aprovada_amanha = 0
 
 if COL_STATUS in df_alta.columns and COL_DATA in df_alta.columns:
