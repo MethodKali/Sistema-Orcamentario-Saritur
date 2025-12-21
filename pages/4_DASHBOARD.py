@@ -3,20 +3,25 @@ import pandas as pd
 import altair as alt
 import re
 import smtplib
+import sys
+import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import date, timedelta
 
-# Importamos as configurações e a função de carga do seu arquivo de BACKLOG
-# Certifique-se que o arquivo BACKLOG.py está na mesma pasta.
-from BACKLOG import load_data, PLANILHA_NOME 
+# --- CORREÇÃO DE IMPORTAÇÃO ---
+# Garante que o Python encontre o BACKLOG.py na pasta de cima
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# --- 1. UTILITÁRIOS DE FORMATAÇÃO ---
+try:
+    from BACKLOG import load_data, PLANILHA_NOME
+except ImportError:
+    st.error("Não foi possível encontrar o arquivo BACKLOG.py na raiz do projeto.")
+    st.stop()
 
+# --- UTILITÁRIOS ---
 def valor_brasileiro(valor):
-    """Converte 'R$ 1.234,56' para float 1234.56"""
-    if pd.isna(valor) or valor is None: 
-        return 0.0
+    if pd.isna(valor) or valor is None: return 0.0
     s = str(valor).strip()
     s = re.sub(r"[R$\s\.]", "", s).replace(",", ".")
     try:
@@ -24,6 +29,7 @@ def valor_brasileiro(valor):
     except ValueError:
         return 0.0
 
+# ... restante do código do Dashboard ...
 def br_money(valor):
     """Formata float para R$ 1.234,56"""
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -123,7 +129,7 @@ def app():
         Total Gasto ALTA: {br_money(total_alta)}
         Total Gasto EMERGENCIAL: {br_money(total_emerg)}
         Total Geral: {br_money(total_alta + total_emerg)}
-    
+
         Relatório gerado automaticamente pelo Sistema de Gestão.
         """
 
