@@ -12,7 +12,7 @@ from datetime import date, timedelta
 # --- IMPORTAÇÃO DOS DADOS ---
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 try:
-    from BACKLOG import load_data, PLANILHA_NOME
+    from pages.BACKLOG import load_data, PLANILHA_NOME
 except:
     st.error("Erro ao carregar BACKLOG.py")
     st.stop()
