@@ -38,18 +38,24 @@ def valor_brasileiro(valor):
 def br_money(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# --- FORMATAÇÃO DE GRÁFICOS (ALTAIR) ---
+# --- FORMATAÇÃO DE GRÁFICOS (ALTAIR CORRIGIDO) ---
 def criar_grafico_formatado(df, titulo, cor_barra):
     if df.empty:
         return None
     
     df = df.copy()
     df['VALOR_NUM'] = pd.to_numeric(df['VALOR_NUM'], errors='coerce').fillna(0)
+    df['UNIDADE'] = df['UNIDADE'].astype(str)
     
-    # Criamos a base com o eixo X invisível (axis=None)
+    # Base do gráfico: Forçamos largura fixa de 400px para garantir a renderização das barras
+    # O padding na Scale garante que o gráfico reserve espaço para os textos à direita
     base = alt.Chart(df).encode(
         y=alt.Y('UNIDADE:N', sort='-x', title=None),
-        x=alt.X('VALOR_NUM:Q', title=None, axis=None)
+        x=alt.X('VALOR_NUM:Q', title=None, axis=None, scale=alt.Scale(padding=60))
+    ).properties(
+        width=400, 
+        height=alt.Step(40),
+        title=alt.TitleParams(text=titulo, anchor='start', color='white', fontSize=18)
     )
 
     # Camada de barras
@@ -61,22 +67,15 @@ def criar_grafico_formatado(df, titulo, cor_barra):
     text = base.mark_text(
         align='left',
         baseline='middle',
-        dx=5,
+        dx=8,
         color='white',
         fontWeight='bold',
-        size=12
+        size=13
     ).encode(
         text=alt.Text('VALOR_NUM:Q', format='R$ ,.2f')
     )
 
-    # Combinamos as camadas e definimos propriedades de exibição
-    chart = (bars + text).properties(
-        title=alt.TitleParams(text=titulo, anchor='start', color='white', fontSize=18),
-        width='container', 
-        height=alt.Step(40)
-    )
-
-    return chart
+    return (bars + text).configure_view(strokeOpacity=0)
 
 def app():
     st.title("📊 Dashboard Orçamentário Semanal")
@@ -99,12 +98,13 @@ def app():
         st.error("Falha ao carregar planilha.")
         return
 
-    # 3. Preparação dos Rankings
+    # 3. Preparação dos Rankings (Incluindo limpeza de espaços nos nomes)
     def preparar_ranking(aba_nome, d_inicio, d_fim):
         df = data_dict.get(aba_nome, pd.DataFrame())
         if df.empty: return pd.DataFrame()
         
         df = df.copy()
+        # strip() remove espaços invisíveis que duplicam nomes como 'EXPEDIÇÃO'
         df['UNIDADE'] = df['UNIDADE'].astype(str).str.strip().str.upper()
         df['DATA_DT'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce').dt.date
         df['VALOR_NUM'] = df['VALOR'].apply(valor_brasileiro)
@@ -114,6 +114,7 @@ def app():
         
         if df_f.empty: return pd.DataFrame()
         
+        # Agrupamento consolidado
         df_final = df_f.groupby('UNIDADE')['VALOR_NUM'].sum().reset_index()
         df_final = df_final[df_final['VALOR_NUM'] > 0]
         return df_final.sort_values('VALOR_NUM', ascending=False)
@@ -121,7 +122,7 @@ def app():
     df_alta = preparar_ranking('ALTA', data_inicio, data_fim)
     df_emerg = preparar_ranking('EMERGENCIAL', data_inicio, data_fim)
 
-    # 4. Debug (Expander)
+    # 4. Debug
     with st.expander("🔍 Verificação de Dados (Debug)"):
         st.write(f"Período: {data_inicio} até {data_fim}")
         c1, c2 = st.columns(2)
@@ -136,17 +137,18 @@ def app():
     col1, col2 = st.columns(2)
     with col1:
         if fig_alta:
-            st.altair_chart(fig_alta, use_container_width=True)
+            # use_container_width=False para respeitar a largura fixa de 400px
+            st.altair_chart(fig_alta, use_container_width=False)
         else:
             st.warning("Sem dados para ALTA")
 
     with col2:
         if fig_emerg:
-            st.altair_chart(fig_emerg, use_container_width=True)
+            st.altair_chart(fig_emerg, use_container_width=False)
         else:
             st.warning("Sem dados para EMERGENCIAL")
 
-    # 6. Função de e-mail com Anexos
+    # 6. Função de e-mail
     def enviar_email():
         try:
             remetente = st.secrets["email_user"]
@@ -160,23 +162,11 @@ def app():
             t_alta = df_alta['VALOR_NUM'].sum() if not df_alta.empty else 0
             t_emerg = df_emerg['VALOR_NUM'].sum() if not df_emerg.empty else 0
 
-            corpo = f"""
-            Relatório Orçamentário Semanal Saritur
-            Período: {data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}
-            
-            RESUMO DE GASTOS:
-            TOTAL ALTA: {br_money(t_alta)}
-            TOTAL EMERGENCIAL: {br_money(t_emerg)}
-            TOTAL GERAL: {br_money(t_alta + t_emerg)}
-            
-            Os rankings detalhados seguem em anexo como imagem.
-            """
+            corpo = f"Relatório Semanal\nTOTAL ALTA: {br_money(t_alta)}\nTOTAL EMERG: {br_money(t_emerg)}"
             msg.attach(MIMEText(corpo, 'plain'))
 
-            # Gerar anexos de imagem a partir do Altair
             for chart, nome in [(fig_alta, "ALTA"), (fig_emerg, "EMERGENCIAL")]:
                 if chart:
-                    # Converte o gráfico Altair para bytes PNG
                     png_data = vlc.vegalite_to_png(chart.to_json())
                     img = MIMEImage(png_data)
                     img.add_header('Content-Disposition', 'attachment', filename=f"Ranking_{nome}.png")
@@ -186,7 +176,7 @@ def app():
                 server.starttls()
                 server.login(remetente, senha)
                 server.send_message(msg)
-            st.success("✅ Relatório enviado com sucesso (incluindo anexos)!")
+            st.success("✅ Relatório enviado com sucesso!")
         except Exception as e:
             st.error(f"❌ Erro no envio: {e}")
 
