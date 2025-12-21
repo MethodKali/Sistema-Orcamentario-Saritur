@@ -76,12 +76,56 @@ def preparar_tabela_amanha(df):
 
 def gerar_figura(df, titulo, cor):
     if df.empty: return None
-    altura_dinamica = max(450, len(df) * 45)
-    fig = px.bar(df, x='VALOR_NUM', y='UNIDADE', orientation='h', text='VALOR_NUM', title=titulo)
-    fig.update_traces(marker_color=cor, texttemplate='R$ %{text:,.2f}', textposition='outside', cliponaxis=False, textfont=dict(color="black", size=13))
-    fig.update_layout(paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF", font=dict(color="black"), height=altura_dinamica, margin=dict(l=220, r=120, t=80, b=50), yaxis=dict(title=None, automargin=True, tickfont=dict(color="black", size=13), categoryorder='total ascending', dtick=1), xaxis=dict(visible=False, range=[0, df['VALOR_NUM'].max() * 1.4]), title=dict(x=0.5, font=dict(size=22)))
-    return fig
+    
+    # 1. Calcula o total para o rótulo
+    total_gasto = df['VALOR_NUM'].sum()
+    total_formatado = f"TOTAL: R$ {total_gasto:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
+    altura_dinamica = max(450, len(df) * 45)
+    
+    fig = px.bar(df, x='VALOR_NUM', y='UNIDADE', orientation='h', text='VALOR_NUM', title=titulo)
+    
+    fig.update_traces(
+        marker_color=cor, 
+        texttemplate='R$ %{text:,.2f}', 
+        textposition='outside', 
+        cliponaxis=False, 
+        textfont=dict(color="black", size=13)
+    )
+    
+    fig.update_layout(
+        paper_bgcolor="#FFFFFF", 
+        plot_bgcolor="#FFFFFF", 
+        font=dict(color="black"), 
+        height=altura_dinamica, 
+        margin=dict(l=220, r=120, t=100, b=50), # Aumentei margem superior para o rótulo
+        
+        # 2. Adiciona o Rótulo do Total
+        annotations=[dict(
+            x=0.5, # Centralizado horizontalmente
+            y=1.07, # Posicionado logo acima do gráfico
+            xref="paper",
+            yref="paper",
+            text=f"<b>{total_formatado}</b>",
+            showarrow=False,
+            font=dict(size=18, color=cor), # Usa a mesma cor do gráfico para facilitar a leitura
+            align="center"
+        )],
+
+        yaxis=dict(
+            title=None, 
+            automargin=True, 
+            tickfont=dict(color="black", size=13), 
+            categoryorder='total ascending', 
+            dtick=1
+        ), 
+        xaxis=dict(
+            visible=False, 
+            range=[0, df['VALOR_NUM'].max() * 1.4]
+        ), 
+        title=dict(x=0.5, font=dict(size=22))
+    )
+    return fig
 def app():
     st.title("📊 Gestão de Gastos Saritur")
     hoje = date.today()
