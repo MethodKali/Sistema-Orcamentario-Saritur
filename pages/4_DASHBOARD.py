@@ -113,7 +113,7 @@ def app():
         # ATENÇÃO: Configure esses valores no painel do Streamlit Cloud (Secrets)
         remetente = st.secrets.get("email_user")
         senha = st.secrets.get("email_password")
-        destinatario = "financeiro@empresa.com" # Substitua pelo e-mail real
+        destinatario = "kerlesalves@gmail.com" # Substitua pelo e-mail real
 
         if not remetente or not senha:
             st.error("Credenciais de e-mail não configuradas nos Secrets do Streamlit.")
