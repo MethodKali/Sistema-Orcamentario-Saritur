@@ -134,16 +134,29 @@ def app():
                     img_bytes = fig.to_image(format="png", width=1000, height=800)
                     part = MIMEImage(img_bytes); part.add_header('Content-Disposition', 'attachment', filename=f"{nome}.png")
                     msg.attach(part)
-
-            # Anexos da Tabela (PNG e XLSX)
-            if not df_tabela_amanha.empty:
-                # PNG da Tabela
-                fig_tbl = go.Figure(data=[go.Table(
-                    header=dict(values=list(df_tabela_amanha.columns), fill_color='grey', font=dict(color='white')),
-                    cells=dict(values=[df_tabela_amanha[col] for col in df_tabela_amanha.columns], fill_color='white')
-                )])
-                msg.attach(MIMEImage(fig_tbl.to_image(format="png"), name="Programacao_Amanha.png"))
-                
+                # --- VERSÃO MELHORADA PARA O PNG DA TABELA NO EMAIL ---
+                if not df_tabela_amanha.empty:
+                    # Criamos a tabela com larguras de coluna ajustadas
+                    fig_tbl = go.Figure(data=[go.Table(
+                        columnwidth=[80, 150, 200, 100, 100], # Ajuste manual das colunas
+                        header=dict(
+                            values=list(df_tabela_amanha.columns),
+                            fill_color='#1F617E',
+                            font=dict(color='white', size=14),
+                            align='left'
+                        ),
+                        cells=dict(
+                            values=[df_tabela_amanha[col] for col in df_tabela_amanha.columns],
+                            fill_color='#F5F5F5',
+                            font=dict(color='black', size=12),
+                            align='left',
+                            height=30
+                        )
+                    )])
+                    
+                    # Define um tamanho fixo para a imagem da tabela não ficar gigante ou pequena demais
+                    img_tbl_bytes = fig_tbl.to_image(format="png", width=1000, height=min(800, 100 + len(df_tabela_amanha)*35))
+                    msg.attach(MIMEImage(img_tbl_bytes, name="Programacao_Amanha.png"))
                 # Excel
                 buf = io.BytesIO()
                 with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:

@@ -6,3 +6,4 @@ vl-convert-python
 gspread
 oauth2client
 pytz
+xlsxwriter
