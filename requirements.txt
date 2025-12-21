@@ -7,3 +7,4 @@ oauth2client
 vl-convert-python
 plotly
 plotly.express
+kaleido
