@@ -82,7 +82,7 @@ def gerar_figura(df, titulo, cor):
             range=[0, df['VALOR_NUM'].max() * 1.4] 
         ),
         
-        title=dict(color="black", x=0.5, font=dict(size=22))
+        title=dict(x=0.5, font=dict(size=22))
     )
     return fig
 
