@@ -14,7 +14,7 @@ from datetime import date, timedelta
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 try:
-    from BACKLOG import load_data, PLANILHA_NOME
+    from pages.BACKLOG import load_data, PLANILHA_NOME
 except ImportError:
     st.error("Não foi possível encontrar o arquivo BACKLOG.py na raiz do projeto.")
     st.stop()
