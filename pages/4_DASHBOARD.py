@@ -142,6 +142,8 @@ def app():
     # Exibição
     if fig_alta:
         st.altair_chart(fig_alta, use_container_width=True)
+        # Se o Altair falhar, isso aqui VAI mostrar as barras:
+        st.bar_chart(df_alta.set_index('UNIDADE')['VALOR_NUM'])
     
     if fig_emerg:
         st.altair_chart(fig_emerg, use_container_width=True)
