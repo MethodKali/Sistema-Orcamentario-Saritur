@@ -121,7 +121,7 @@ def app():
     
     # 1. Gráfico Total Consolidado (Destaque no topo)
     st.subheader("📊 Visão Geral Consolidada")
-    fig_total = gerar_figura(df_total, "Total Gasto na ALTA e EMERGENCIAL", "#106332")
+    fig_total = gerar_figura(df_total, f"Total Gasto na ALTA e EMERGENCIAL {data_inicio.strftime('%d/%m')} a {data_fim.strftime('%d/%m')}", "#106332")
     if fig_total:
         st.plotly_chart(fig_total, use_container_width=True)
     else:
@@ -131,7 +131,7 @@ def app():
 
     # 2. Ranking ALTA (Agora ocupando a largura total)
     st.subheader("🔵 Detalhamento ALTA")
-    fig_a = gerar_figura(df_alta, "Ranking ALTA (Status: PEDIDO)", "#1F617E")
+    fig_a = gerar_figura(df_alta, f"Ranking - Total gasto na ALTA (Status: PEDIDO) {data_inicio.strftime('%d/%m')} a {data_fim.strftime('%d/%m')}", "#1F617E")
     if fig_a: 
         st.plotly_chart(fig_a, use_container_width=True)
     else:
@@ -141,7 +141,7 @@ def app():
 
     # 3. Ranking EMERGENCIAL (Agora ocupando a largura total)
     st.subheader("🔴 Detalhamento EMERGENCIAL")
-    fig_e = gerar_figura(df_emerg, "Ranking EMERGENCIAL", "#942525")
+    fig_e = gerar_figura(df_emerg, f"Ranking - Total gasto na EMERGENCIAL {data_inicio.strftime('%d/%m')} a {data_fim.strftime('%d/%m')}", "#942525")
     if fig_e: 
         st.plotly_chart(fig_e, use_container_width=True)
     else:
