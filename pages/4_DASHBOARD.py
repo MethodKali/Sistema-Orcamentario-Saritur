@@ -68,11 +68,11 @@ def gerar_figura(df, titulo, cor):
         
         xaxis=dict(
             visible=False, 
-            range=[0, df['VALOR_NUM'].max() * 1.5] # Aumentado para o valor R$ não sumir
+            range=[0, df['VALOR_NUM'].max() * 1.35] # Aumentado para o valor R$ não sumir
         ),
         
         # Margens: 'l' é a esquerda. Aumentamos para 200 para nomes longos
-        margin=dict(l=150, r=50, t=60, b=60), 
+        margin=dict(l=150, r=30, t=60, b=60), 
         height=500, # Aumentado para dar mais respiro entre as barras
         title=dict(x=0.5, font=dict(size=22)) # Centraliza o título
     )
