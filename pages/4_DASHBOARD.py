@@ -61,11 +61,16 @@ def preparar_tabela_amanha(df):
         try: return float(s)
         except: return 0.0
 
-    total_valor = df_f['VALOR'].apply(limpar_valor).sum()
+    total_num = df_f['VALOR'].apply(limpar_valor).sum()
+    valor_formatado = f"R$ {total_num:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    # Linha de total com preenchimento para todas as colunas (evita erros no PNG/Excel)
     linha_total = pd.DataFrame([{ 
-        "DATA": "TOTAL", 
-        "UNIDADE": "", "CARRO | UTILIZAÇÃO": "", "PEDIDO": "",
-        "VALOR": f"R$ {total_valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        "DATA": "TOTAL GERAL", 
+        "UNIDADE": "---", 
+        "CARRO | UTILIZAÇÃO": "---", 
+        "PEDIDO": "---",
+        "VALOR": valor_formatado
     }])
     return pd.concat([df_f, linha_total], ignore_index=True)
 
@@ -86,7 +91,7 @@ def app():
 
     data_dict = load_data(PLANILHA_NOME)
     
-    # Processamento Gráficos
+    # Processamento Rankings
     df_alta_orig = data_dict.get('ALTA', pd.DataFrame())
     df_alta_filt = df_alta_orig[df_alta_orig['STATUS'].astype(str).str.strip().str.upper() == "PEDIDO"] if not df_alta_orig.empty else pd.DataFrame()
     df_alta = preparar_dados_plotly(df_alta_filt, data_inicio, data_fim)
@@ -99,7 +104,7 @@ def app():
     # Processamento Tabela Amanhã
     df_tabela_amanha = preparar_tabela_amanha(df_alta_orig)
 
-    # --- EXIBIÇÃO ---
+    # --- EXIBIÇÃO NO STREAMLIT ---
     st.markdown("---")
     st.subheader(f"📅 Programação para Amanhã ({(hoje + timedelta(days=1)).strftime('%d/%m/%Y')})")
     if not df_tabela_amanha.empty:
@@ -108,15 +113,12 @@ def app():
         st.info("Nenhuma programação para amanhã (Excluindo 'PEDIDO').")
 
     st.markdown("---")
-    st.subheader("📊 Visão Geral Consolidada")
     fig_total = gerar_figura(df_total, f"Ranking Geral - {data_inicio.strftime('%d/%m')} a {data_fim.strftime('%d/%m')}", "#106332")
     if fig_total: st.plotly_chart(fig_total, use_container_width=True)
 
-    st.subheader("🔵 Detalhamento ALTA")
     fig_a = gerar_figura(df_alta, f"Ranking ALTA (PEDIDO) - {data_inicio.strftime('%d/%m')} a {data_fim.strftime('%d/%m')}", "#1F617E")
     if fig_a: st.plotly_chart(fig_a, use_container_width=True)
 
-    st.subheader("🔴 Detalhamento EMERGENCIAL")
     fig_e = gerar_figura(df_emerg, f"Ranking EMERGENCIAL - {data_inicio.strftime('%d/%m')} a {data_fim.strftime('%d/%m')}", "#942525")
     if fig_e: st.plotly_chart(fig_e, use_container_width=True)
 
@@ -128,50 +130,50 @@ def app():
             msg['From'], msg['To'] = user, "kerlesalves@gmail.com"
             msg.attach(MIMEText(f"Relatório consolidado e programação de amanhã.\nPeríodo: {data_inicio} a {data_fim}", 'plain'))
 
-            # Anexos de Gráficos
+            # 1. Anexos de Rankings (PNG)
             for fig, nome in [(fig_total, "Total"), (fig_a, "ALTA"), (fig_e, "EMERG")]:
                 if fig:
                     img_bytes = fig.to_image(format="png", width=1000, height=800)
-                    part = MIMEImage(img_bytes); part.add_header('Content-Disposition', 'attachment', filename=f"{nome}.png")
+                    part = MIMEImage(img_bytes)
+                    part.add_header('Content-Disposition', 'attachment', filename=f"{nome}.png")
                     msg.attach(part)
-                # --- VERSÃO MELHORADA PARA O PNG DA TABELA NO EMAIL ---
-                if not df_tabela_amanha.empty:
-                    # Criamos a tabela com larguras de coluna ajustadas
-                    fig_tbl = go.Figure(data=[go.Table(
-                        columnwidth=[80, 150, 200, 100, 100], # Ajuste manual das colunas
-                        header=dict(
-                            values=list(df_tabela_amanha.columns),
-                            fill_color='#1F617E',
-                            font=dict(color='white', size=14),
-                            align='left'
-                        ),
-                        cells=dict(
-                            values=[df_tabela_amanha[col] for col in df_tabela_amanha.columns],
-                            fill_color='#F5F5F5',
-                            font=dict(color='black', size=12),
-                            align='left',
-                            height=30
-                        )
-                    )])
-                    
-                    # Define um tamanho fixo para a imagem da tabela não ficar gigante ou pequena demais
-                    img_tbl_bytes = fig_tbl.to_image(format="png", width=1000, height=min(800, 100 + len(df_tabela_amanha)*35))
-                    msg.attach(MIMEImage(img_tbl_bytes, name="Programacao_Amanha.png"))
-                # Excel
+
+            # 2. Anexos da Tabela de Amanhã (PNG + XLSX)
+            if not df_tabela_amanha.empty:
+                # Gerar PNG da Tabela com ALTURA DINÂMICA
+                altura_calc = 150 + (len(df_tabela_amanha) * 35)
+                fig_tbl = go.Figure(data=[go.Table(
+                    columnwidth=[100, 150, 200, 100, 120],
+                    header=dict(values=list(df_tabela_amanha.columns), fill_color='#1F617E', font=dict(color='white', size=14), align='center'),
+                    cells=dict(values=[df_tabela_amanha[col] for col in df_tabela_amanha.columns], fill_color='#F5F5F5', font=dict(color='black', size=12), align='center', height=30)
+                )])
+                fig_tbl.update_layout(margin=dict(l=10, r=10, t=10, b=10))
+                img_tbl_bytes = fig_tbl.to_image(format="png", width=1100, height=altura_calc)
+                part_tbl_png = MIMEImage(img_tbl_bytes)
+                part_tbl_png.add_header('Content-Disposition', 'attachment', filename="Programacao_Amanha.png")
+                msg.attach(part_tbl_png)
+
+                # Gerar Excel
                 buf = io.BytesIO()
                 with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
                     df_tabela_amanha.to_excel(writer, index=False, sheet_name='Amanha')
                 part_ex = MIMEBase('application', "octet-stream")
-                part_ex.set_payload(buf.getvalue()); encoders.encode_base64(part_ex)
+                part_ex.set_payload(buf.getvalue())
+                encoders.encode_base64(part_ex)
                 part_ex.add_header('Content-Disposition', 'attachment', filename="Programacao_Amanha.xlsx")
                 msg.attach(part_ex)
 
             with smtplib.SMTP('smtp.gmail.com', 587) as server:
-                server.starttls(); server.login(user, password); server.send_message(msg)
-            st.success("✅ Relatório e Tabela enviados!")
-        except Exception as e: st.error(f"Erro: {e}")
+                server.starttls()
+                server.login(user, password)
+                server.send_message(msg)
+            st.success("✅ Relatório e Tabela enviados com sucesso!")
+        except Exception as e:
+            st.error(f"Erro no envio: {e}")
 
-    if st.button("📧 ENVIAR RELATÓRIO POR E-MAIL"): enviar()
+    st.markdown("---")
+    if st.button("📧 ENVIAR RELATÓRIO POR E-MAIL"):
+        enviar()
 
 if __name__ == "__main__":
     app()
