@@ -1,136 +1,159 @@
 import streamlit as st
 import pandas as pd
 import altair as alt
-import datetime
 import re
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import date, timedelta
 
-# --- CONFIGURAÇÕES E UTILITÁRIOS (Corrigido) ---
+# Importamos as configurações e a função de carga do seu arquivo de BACKLOG
+# Certifique-se que o arquivo BACKLOG.py está na mesma pasta.
+from BACKLOG import load_data, PLANILHA_NOME 
+
+# --- 1. UTILITÁRIOS DE FORMATAÇÃO ---
 
 def valor_brasileiro(valor):
+    """Converte 'R$ 1.234,56' para float 1234.56"""
     if pd.isna(valor) or valor is None: 
         return 0.0
     s = str(valor).strip()
-    # Remove R$, espaços e pontos de milhar, troca vírgula decimal por ponto
     s = re.sub(r"[R$\s\.]", "", s).replace(",", ".")
     try:
         return float(s)
-    except ValueError: # O erro estava aqui: precisa de 'except', não apenas 'else'
+    except ValueError:
         return 0.0
 
 def br_money(valor):
-    if pd.isna(valor): 
-        return "R$ 0,00"
+    """Formata float para R$ 1.234,56"""
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# ----------------------------------------------------
-# 1. FILTROS DE DATA (SEMANAL)
-# ----------------------------------------------------
-st.title("📊 Dashboard Orçamentário Semanal")
+# --- 2. LOGICA PRINCIPAL ---
 
-st.sidebar.header("📅 Filtro de Período")
-hoje = date.today()
+def app():
+    st.title("📊 Dashboard Orçamentário Semanal")
+    st.markdown("---")
 
-# Define automaticamente Segunda a Domingo da semana atual
-inicio_semana_padrao = hoje - timedelta(days=hoje.weekday())
-fim_semana_padrao = inicio_semana_padrao + timedelta(days=6)
+    # Filtros de Data
+    st.sidebar.header("📅 Filtro de Período")
+    hoje = date.today()
+    inicio_semana = hoje - timedelta(days=hoje.weekday())
+    fim_semana = inicio_semana + timedelta(days=6)
 
-data_inicio = st.sidebar.date_input("Início da Semana", inicio_semana_padrao)
-data_fim = st.sidebar.date_input("Fim da Semana", fim_semana_padrao)
+    data_inicio = st.sidebar.date_input("Início da Semana", inicio_semana)
+    data_fim = st.sidebar.date_input("Fim da Semana", fim_semana)
 
-st.info(f"Relatório de **{data_inicio.strftime('%d/%m/%Y')}** até **{data_fim.strftime('%d/%m/%Y')}**")
+    # Carregamento de Dados
+    with st.spinner("Carregando dados da Planilha..."):
+        data_dict = load_data(PLANILHA_NOME)
 
-# ----------------------------------------------------
-# 2. CARREGAMENTO DOS DADOS (Simulado)
-# ----------------------------------------------------
-# Aqui você deve usar sua função load_sheets() definida nos outros arquivos
-# df_alta, df_emerg, _ = load_sheets(hoje.isoformat())
+    if not data_dict:
+        st.error("Erro ao carregar dados. Verifique a conexão com o Google Sheets.")
+        return
 
-# Exemplo de filtragem por data (considerando que a coluna DATA já é datetime)
-# df_alta_f = df_alta[(df_alta['DATA'].dt.date >= data_inicio) & (df_alta['DATA'].dt.date <= data_fim)]
-# df_emerg_f = df_emerg[(df_emerg['DATA'].dt.date >= data_inicio) & (df_emerg['DATA'].dt.date <= data_fim)]
+    # Processamento para os Gráficos
+    def preparar_ranking(aba_nome):
+        df = data_dict.get(aba_nome, pd.DataFrame())
+        if df.empty: return pd.DataFrame()
+        
+        # Converter coluna DATA e VALOR
+        df['DATA_DT'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce').dt.date
+        df['VALOR_NUM'] = df['VALOR'].apply(valor_brasileiro)
+        
+        # Filtrar por data
+        mask = (df['DATA_DT'] >= data_inicio) & (df['DATA_DT'] <= data_fim)
+        df_filtrado = df.loc[mask].copy()
+        
+        if df_filtrado.empty: return pd.DataFrame()
+        
+        return df_filtrado.groupby('UNIDADE')['VALOR_NUM'].sum().reset_index().sort_values('VALOR_NUM', ascending=False)
 
-# ----------------------------------------------------
-# 3. GRÁFICOS DE RANKING POR UNIDADE
-# ----------------------------------------------------
+    df_alta_rank = preparar_ranking('ALTA')
+    df_emerg_rank = preparar_ranking('EMERGENCIAL')
 
+    # --- 3. EXIBIÇÃO ---
 
+    col1, col2 = st.columns(2)
 
-col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("🟦 Ranking ALTA")
+        if not df_alta_rank.empty:
+            chart = alt.Chart(df_alta_rank).mark_bar(color='#4285F4').encode(
+                x=alt.X('VALOR_NUM:Q', title='Gasto (R$)'),
+                y=alt.Y('UNIDADE:N', sort='-x', title='Unidade'),
+                tooltip=['UNIDADE', alt.Tooltip('VALOR_NUM:Q', format=',.2f')]
+            ).properties(height=400)
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.warning("Nenhum dado na aba ALTA neste período.")
 
-with col1:
-    st.subheader("🟦 Ranking ALTA")
-    # rank_alta = df_alta_f.groupby("UNIDADE")["VALOR"].sum().reset_index().sort_values("VALOR", ascending=False)
-    # chart_alta = alt.Chart(rank_alta).mark_bar(color='#4285F4').encode(
-    #     x=alt.X('VALOR', title='Total (R$)'),
-    #     y=alt.Y('UNIDADE', sort='-x', title='Unidade'),
-    #     tooltip=['UNIDADE', alt.Tooltip('VALOR', format=',.2f')]
-    # ).properties(height=400)
-    # st.altair_chart(chart_alta, use_container_width=True)
+    with col2:
+        st.subheader("🟥 Ranking EMERGENCIAL")
+        if not df_emerg_rank.empty:
+            chart = alt.Chart(df_emerg_rank).mark_bar(color='#EA4335').encode(
+                x=alt.X('VALOR_NUM:Q', title='Gasto (R$)'),
+                y=alt.Y('UNIDADE:N', sort='-x', title='Unidade'),
+                tooltip=['UNIDADE', alt.Tooltip('VALOR_NUM:Q', format=',.2f')]
+            ).properties(height=400)
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.warning("Nenhum dado na aba EMERGENCIAL neste período.")
 
-with col2:
-    st.subheader("🟥 Ranking EMERGENCIAL")
-    # rank_emerg = df_emerg_f.groupby("UNIDADE")["VALOR"].sum().reset_index().sort_values("VALOR", ascending=False)
-    # chart_emerg = alt.Chart(rank_emerg).mark_bar(color='#EA4335').encode(
-    #     x=alt.X('VALOR', title='Total (R$)'),
-    #     y=alt.Y('UNIDADE', sort='-x', title='Unidade'),
-    #     tooltip=['UNIDADE', alt.Tooltip('VALOR', format=',.2f')]
-    # ).properties(height=400)
-    # st.altair_chart(chart_emerg, use_container_width=True)
+    st.markdown("---")
 
-# ----------------------------------------------------
-# 4. FUNCIONALIDADE DE ENVIO DE E-MAIL
-# ----------------------------------------------------
+    # --- 4. ENVIO DE E-MAIL ---
 
-def enviar_relatorio_email(data_ini, data_fim, texto_corpo):
-    remetente = "seu-email@gmail.com"
-    senha = "sua-senha-de-app" # Gerada no Google Account
-    destinatario = "financeiro@empresa.com"
+    def enviar_email():
+        # ATENÇÃO: Configure esses valores no painel do Streamlit Cloud (Secrets)
+        remetente = st.secrets.get("email_user")
+        senha = st.secrets.get("email_password")
+        destinatario = "financeiro@empresa.com" # Substitua pelo e-mail real
+
+        if not remetente or not senha:
+            st.error("Credenciais de e-mail não configuradas nos Secrets do Streamlit.")
+            return
+
+        total_alta = df_alta_rank['VALOR_NUM'].sum() if not df_alta_rank.empty else 0
+        total_emerg = df_emerg_rank['VALOR_NUM'].sum() if not df_emerg_rank.empty else 0
+
+        corpo = f"""
+        Relatório Orçamentário Semanal
+        Período: {data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}
+
+        Total Gasto ALTA: {br_money(total_alta)}
+        Total Gasto EMERGENCIAL: {br_money(total_emerg)}
+        Total Geral: {br_money(total_alta + total_emerg)}
     
-    msg = MIMEMultipart()
-    msg['From'] = remetente
-    msg['To'] = destinatario
-    msg['Subject'] = f"Relatório Orçamentário Semanal {data_ini.strftime('%d/%m')} a {data_fim.strftime('%d/%m')}"
-    
-    msg.attach(MIMEText(texto_corpo, 'plain'))
-    
-    try:
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(remetente, senha)
-        server.send_message(msg)
-        server.quit()
-        return True
-    except Exception as e:
-        st.error(f"Erro ao enviar e-mail: {e}")
-        return False
+        Relatório gerado automaticamente pelo Sistema de Gestão.
+        """
 
-st.markdown("---")
+        msg = MIMEMultipart()
+        msg['From'] = remetente
+        msg['To'] = destinatario
+        msg['Subject'] = f"Relatório Orçamentário Semanal {data_inicio.strftime('%d/%m')} a {data_fim.strftime('%d/%m')}"
+        msg.attach(MIMEText(corpo, 'plain'))
 
-if st.button("📧 ENVIAR RELATÓRIO"):
-    # Criando o corpo do texto com o resumo dos gastos
-    resumo_texto = f"Relatório Orçamentário Semanal {data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}\n\n"
-    resumo_texto += "Resumo de gastos por unidade disponível no dashboard."
-    
-    if enviar_relatorio_email(data_inicio, data_fim, resumo_texto):
-        st.success("Relatório enviado com sucesso!")
+        try:
+            with smtplib.SMTP('smtp.gmail.com', 587) as server:
+                server.starttls()
+                server.login(remetente, senha)
+                server.send_message(msg)
+            st.success("✅ Relatório enviado com sucesso!")
+        except Exception as e:
+            st.error(f"❌ Erro no envio: {e}")
 
-# ----------------------------------------------------
-# 5. AUTOMAÇÃO DE DOMINGO (COMENTADO)
-# ----------------------------------------------------
-"""
-# LÓGICA DE AUTOMAÇÃO PARA DOMINGO
-# Para funcionar, este bloco deve estar fora de funções ou em um script de background.
+    if st.button("📧 ENVIAR RELATÓRIO AGORA", use_container_width=True):
+        enviar_email()
 
-dia_semana = date.today().weekday()
-# 6 representa Domingo
-if dia_semana == 6:
-    # 1. Carregar dados da semana que passou
-    # 2. Gerar resumo de valores
-    # 3. enviar_relatorio_email(data_ini, data_fim, resumo)
-    # Nota: Use um arquivo de log ou banco para garantir que envie apenas 1 vez no dia.
-    pass
-"""
+    # --- 5. AUTOMAÇÃO DE DOMINGO (COMENTADO) ---
+    """
+    # Lógica para rodar automaticamente aos Domingos:
+    hoje_check = date.today()
+    if hoje_check.weekday() == 6: # 6 = Domingo
+        # Aqui o script chamaria enviar_email() automaticamente
+        # É recomendado salvar um log para evitar envios duplicados.
+        pass
+    """
+
+if __name__ == "__main__":
+    app()
