@@ -50,7 +50,7 @@ def gerar_figura(df, titulo, cor):
         texttemplate='R$ %{text:,.2f}', 
         textposition='outside',
         cliponaxis=False,
-        textfont=dict(color="white", size=12)
+        textfont=dict(color="gray", size=12)
     )
     
     fig.update_layout(
@@ -72,7 +72,7 @@ def gerar_figura(df, titulo, cor):
         ),
         
         # Margens: 'l' é a esquerda. Aumentamos para 200 para nomes longos
-        margin=dict(l=200, r=50, t=60, b=40), 
+        margin=dict(l=150, r=50, t=60, b=60), 
         height=500, # Aumentado para dar mais respiro entre as barras
         title=dict(x=0.5, font=dict(size=22)) # Centraliza o título
     )

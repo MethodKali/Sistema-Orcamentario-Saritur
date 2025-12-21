@@ -1,0 +1,4 @@
+git status
+git add .
+git commit -m "files modified"
+git push origin HEAD
