@@ -39,10 +39,10 @@ def preparar_dados_plotly(df, d_inicio, d_fim):
     ranking = df.loc[mask].groupby('UNIDADE')['VALOR_NUM'].sum().reset_index()
     return ranking.sort_values('VALOR_NUM', ascending=True)
 
-# --- GRÁFICO PLOTLY ---
 def gerar_figura(df, titulo, cor):
     if df.empty: return None
-    # Criando o gráfico de barras horizontais
+    
+    # Criando o gráfico
     fig = px.bar(df, x='VALOR_NUM', y='UNIDADE', orientation='h', 
                  text='VALOR_NUM', title=titulo)
     
@@ -50,20 +50,32 @@ def gerar_figura(df, titulo, cor):
         marker_color=cor,
         texttemplate='R$ %{text:,.2f}', 
         textposition='outside',
-        cliponaxis=False
+        cliponaxis=False,
+        textfont=dict(color="white") # Garante que o valor seja branco
     )
     
     fig.update_layout(
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color="white"),
-        xaxis=dict(visible=False),
-        yaxis=dict(title=None),
-        margin=dict(l=20, r=100, t=50, b=20),
-        height=400
+        # Define a cor do fundo (área do gráfico e área externa)
+        paper_bgcolor='#111111', 
+        plot_bgcolor='#111111',
+        
+        font=dict(color="white"), # Cor da fonte do título e eixos
+        title=dict(font=dict(size=20, color="white")),
+        
+        xaxis=dict(
+            visible=False, 
+            showgrid=False, 
+            range=[0, df['VALOR_NUM'].max() * 1.3] # Espaço para o texto não cortar
+        ),
+        yaxis=dict(
+            title=None, 
+            tickfont=dict(color="white", size=12),
+            showgrid=False
+        ),
+        margin=dict(l=20, r=100, t=60, b=20),
+        height=450
     )
     return fig
-
 def app():
     st.title("📊 Gestão de Gastos Saritur")
     
