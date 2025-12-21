@@ -6,5 +6,4 @@ gspread
 oauth2client
 vl-convert-python
 plotly
-plotly.express
 kaleido==0.1.0.post1
