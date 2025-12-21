@@ -42,7 +42,6 @@ def preparar_dados_plotly(df, d_inicio, d_fim):
 def gerar_figura(df, titulo, cor):
     if df.empty: return None
     
-    # Criando o gráfico
     fig = px.bar(df, x='VALOR_NUM', y='UNIDADE', orientation='h', 
                  text='VALOR_NUM', title=titulo)
     
@@ -51,30 +50,36 @@ def gerar_figura(df, titulo, cor):
         texttemplate='R$ %{text:,.2f}', 
         textposition='outside',
         cliponaxis=False,
-        textfont=dict(color="white") # Garante que o valor seja branco
+        textfont=dict(color="white", size=12)
     )
     
     fig.update_layout(
-        # Define a cor do fundo (área do gráfico e área externa)
         paper_bgcolor='#111111', 
         plot_bgcolor='#111111',
+        font=dict(color="white"),
         
-        font=dict(color="white"), # Cor da fonte do título e eixos
-        title=dict(font=dict(size=20, color="white")),
+        # Ajuste crucial para os nomes das unidades
+        yaxis=dict(
+            title=None, 
+            automargin=True, # Faz o Plotly calcular o espaço necessário
+            tickfont=dict(color="white", size=12),
+            dtick=1 # Garante que cada unidade apareça individualmente
+        ),
         
         xaxis=dict(
             visible=False, 
-            showgrid=False, 
-            range=[0, df['VALOR_NUM'].max() * 1.3] # Espaço para o texto não cortar
+            range=[0, df['VALOR_NUM'].max() * 1.5] # Aumentado para o valor R$ não sumir
         ),
-        yaxis=dict(
-            title=None, 
-            tickfont=dict(color="white", size=12),
-            showgrid=False
-        ),
-        margin=dict(l=20, r=100, t=60, b=20),
-        height=450
+        
+        # Margens: 'l' é a esquerda. Aumentamos para 200 para nomes longos
+        margin=dict(l=200, r=50, t=60, b=40), 
+        height=500, # Aumentado para dar mais respiro entre as barras
+        title=dict(x=0.5, font=dict(size=22)) # Centraliza o título
     )
+    
+    # Força a exibição de todas as categorias sem pular nenhuma
+    fig.update_yaxes(type='category')
+    
     return fig
 def app():
     st.title("📊 Gestão de Gastos Saritur")
