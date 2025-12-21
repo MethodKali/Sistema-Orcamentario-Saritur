@@ -145,7 +145,8 @@ def app():
     if fig_e: 
         st.plotly_chart(fig_e, use_container_width=True)
     else:
-        st.warning("Sem dados para a aba EMERGENCIAL.")    st.plotly_chart(fig_e, use_container_width=True)
+        st.warning("Sem dados para a aba EMERGENCIAL.")    
+        st.plotly_chart(fig_e, use_container_width=True)
 
     # --- FUNÇÃO DE ENVIO DE E-MAIL ---
     def enviar():
