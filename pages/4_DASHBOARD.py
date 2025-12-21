@@ -72,8 +72,8 @@ def gerar_figura(df, titulo, cor):
         ),
         
         # Margens: 'l' é a esquerda. Aumentamos para 200 para nomes longos
-        margin=dict(l=150, r=30, t=60, b=60), 
-        height=500, # Aumentado para dar mais respiro entre as barras
+        margin=dict(l=150, r=10, t=60, b=60), 
+        height=600, # Aumentado para dar mais respiro entre as barras
         title=dict(x=0.5, font=dict(size=22)) # Centraliza o título
     )
     
@@ -99,10 +99,12 @@ def app():
     col1, col2 = st.columns(2)
     with col1:
         fig_a = gerar_figura(df_alta, "Ranking ALTA", "#00A2E8")
-        if fig_a: st.plotly_chart(fig_a, use_container_width=True)
+        if fig_a: 
+            st.plotly_chart(fig_a, use_container_width=True)
     with col2:
         fig_e = gerar_figura(df_emerg, "Ranking EMERGENCIAL", "#FF4B4B")
-        if fig_e: st.plotly_chart(fig_e, use_container_width=True)
+        if fig_e: 
+            st.plotly_chart(fig_e, use_container_width=True)
 
     # Função de E-mail
     def enviar():
