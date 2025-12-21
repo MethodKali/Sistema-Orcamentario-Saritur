@@ -47,13 +47,15 @@ def criar_grafico_formatado(df, titulo, cor_barra):
     df['VALOR_NUM'] = pd.to_numeric(df['VALOR_NUM'], errors='coerce').fillna(0)
     df['UNIDADE'] = df['UNIDADE'].astype(str)
     
-    # Base do gráfico: Forçamos largura fixa de 400px para garantir a renderização das barras
-    # O padding na Scale garante que o gráfico reserve espaço para os textos à direita
+    # CALCULANDO O LIMITE DO EIXO X PARA NÃO CORTAR O TEXTO
+    max_valor = df['VALOR_NUM'].max() * 1.3  # Dá 30% de margem à direita para o texto
+    
+    # Base do gráfico: Forçamos largura fixa de 350px para caber nas colunas do Streamlit
     base = alt.Chart(df).encode(
         y=alt.Y('UNIDADE:N', sort='-x', title=None),
-        x=alt.X('VALOR_NUM:Q', title=None, axis=None, scale=alt.Scale(padding=60))
+        x=alt.X('VALOR_NUM:Q', title=None, axis=None, scale=alt.Scale(domain=[0, max_valor]))
     ).properties(
-        width=400, 
+        width=350, 
         height=alt.Step(40),
         title=alt.TitleParams(text=titulo, anchor='start', color='white', fontSize=18)
     )
@@ -70,7 +72,7 @@ def criar_grafico_formatado(df, titulo, cor_barra):
         dx=8,
         color='white',
         fontWeight='bold',
-        size=13
+        size=12
     ).encode(
         text=alt.Text('VALOR_NUM:Q', format='R$ ,.2f')
     )
@@ -98,13 +100,13 @@ def app():
         st.error("Falha ao carregar planilha.")
         return
 
-    # 3. Preparação dos Rankings (Incluindo limpeza de espaços nos nomes)
+    # 3. Preparação dos Rankings (Limpando nomes duplicados)
     def preparar_ranking(aba_nome, d_inicio, d_fim):
         df = data_dict.get(aba_nome, pd.DataFrame())
         if df.empty: return pd.DataFrame()
         
         df = df.copy()
-        # strip() remove espaços invisíveis que duplicam nomes como 'EXPEDIÇÃO'
+        # strip() remove espaços invisíveis que duplicam nomes no seu debug
         df['UNIDADE'] = df['UNIDADE'].astype(str).str.strip().str.upper()
         df['DATA_DT'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce').dt.date
         df['VALOR_NUM'] = df['VALOR'].apply(valor_brasileiro)
@@ -114,7 +116,7 @@ def app():
         
         if df_f.empty: return pd.DataFrame()
         
-        # Agrupamento consolidado
+        # Consolida unidades repetidas
         df_final = df_f.groupby('UNIDADE')['VALOR_NUM'].sum().reset_index()
         df_final = df_final[df_final['VALOR_NUM'] > 0]
         return df_final.sort_values('VALOR_NUM', ascending=False)
@@ -122,7 +124,7 @@ def app():
     df_alta = preparar_ranking('ALTA', data_inicio, data_fim)
     df_emerg = preparar_ranking('EMERGENCIAL', data_inicio, data_fim)
 
-    # 4. Debug
+    # 4. Debug (Expander)
     with st.expander("🔍 Verificação de Dados (Debug)"):
         st.write(f"Período: {data_inicio} até {data_fim}")
         c1, c2 = st.columns(2)
@@ -137,7 +139,7 @@ def app():
     col1, col2 = st.columns(2)
     with col1:
         if fig_alta:
-            # use_container_width=False para respeitar a largura fixa de 400px
+            # use_container_width=False garante que o gráfico não seja "esmagado"
             st.altair_chart(fig_alta, use_container_width=False)
         else:
             st.warning("Sem dados para ALTA")
@@ -157,7 +159,7 @@ def app():
             msg = MIMEMultipart()
             msg['From'] = remetente
             msg['To'] = "kerlesalves@gmail.com"
-            msg['Subject'] = f"Relatório Saritur - {data_inicio.strftime('%d/%m')} a {data_fim.strftime('%d/%m')}"
+            msg['Subject'] = f"Relatório Saritur - {data_inicio.strftime('%d/%m')}"
 
             t_alta = df_alta['VALOR_NUM'].sum() if not df_alta.empty else 0
             t_emerg = df_emerg['VALOR_NUM'].sum() if not df_emerg.empty else 0
