@@ -38,7 +38,7 @@ def valor_brasileiro(valor):
 def br_money(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# --- FORMATAÇÃO DE GRÁFICOS (ALTAIR CORRIGIDO) ---
+# --- FORMATAÇÃO DE GRÁFICOS (ALTAIR BLINDADO) ---
 def criar_grafico_formatado(df, titulo, cor_barra):
     if df.empty:
         return None
@@ -48,9 +48,10 @@ def criar_grafico_formatado(df, titulo, cor_barra):
     df['UNIDADE'] = df['UNIDADE'].astype(str)
     
     # CALCULANDO O LIMITE DO EIXO X PARA NÃO CORTAR O TEXTO
-    max_valor = df['VALOR_NUM'].max() * 1.3  # Dá 30% de margem à direita para o texto
+    # Isso força o Altair a criar um espaço horizontal real
+    max_valor = df['VALOR_NUM'].max() * 1.4 
     
-    # Base do gráfico: Forçamos largura fixa de 350px para caber nas colunas do Streamlit
+    # Base do gráfico: Forçamos largura fixa de 350px e domínio X manual
     base = alt.Chart(df).encode(
         y=alt.Y('UNIDADE:N', sort='-x', title=None),
         x=alt.X('VALOR_NUM:Q', title=None, axis=None, scale=alt.Scale(domain=[0, max_valor]))
@@ -77,9 +78,11 @@ def criar_grafico_formatado(df, titulo, cor_barra):
         text=alt.Text('VALOR_NUM:Q', format='R$ ,.2f')
     )
 
-    return (bars + text).configure_view(strokeOpacity=0)
+    # Combinamos e configuramos para remover qualquer borda que atrapalhe
+    return (bars + text).configure_view(strokeOpacity=0).configure_axis(grid=False)
 
 def app():
+    st.set_page_config(layout="wide") # Melhora a visualização lateral
     st.title("📊 Dashboard Orçamentário Semanal")
     st.markdown("---")
 
@@ -93,20 +96,20 @@ def app():
     data_fim = st.sidebar.date_input("Fim", fim_semana)
 
     # 2. Carregamento dos dados
-    with st.spinner("Carregando dados..."):
+    with st.spinner("Carregando dados da planilha..."):
         data_dict = load_data(PLANILHA_NOME)
 
     if not data_dict:
         st.error("Falha ao carregar planilha.")
         return
 
-    # 3. Preparação dos Rankings (Limpando nomes duplicados)
+    # 3. Preparação dos Rankings (Limpando nomes duplicados como 'EXPEDIÇÃO')
     def preparar_ranking(aba_nome, d_inicio, d_fim):
         df = data_dict.get(aba_nome, pd.DataFrame())
         if df.empty: return pd.DataFrame()
         
         df = df.copy()
-        # strip() remove espaços invisíveis que duplicam nomes no seu debug
+        # strip() remove espaços que duplicam nomes no seu debug
         df['UNIDADE'] = df['UNIDADE'].astype(str).str.strip().str.upper()
         df['DATA_DT'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce').dt.date
         df['VALOR_NUM'] = df['VALOR'].apply(valor_brasileiro)
@@ -116,7 +119,7 @@ def app():
         
         if df_f.empty: return pd.DataFrame()
         
-        # Consolida unidades repetidas
+        # Agrupamento consolida unidades repetidas
         df_final = df_f.groupby('UNIDADE')['VALOR_NUM'].sum().reset_index()
         df_final = df_final[df_final['VALOR_NUM'] > 0]
         return df_final.sort_values('VALOR_NUM', ascending=False)
@@ -139,7 +142,7 @@ def app():
     col1, col2 = st.columns(2)
     with col1:
         if fig_alta:
-            # use_container_width=False garante que o gráfico não seja "esmagado"
+            # use_container_width=False para garantir que respeite a largura de 350px
             st.altair_chart(fig_alta, use_container_width=False)
         else:
             st.warning("Sem dados para ALTA")
@@ -150,7 +153,7 @@ def app():
         else:
             st.warning("Sem dados para EMERGENCIAL")
 
-    # 6. Função de e-mail
+    # 6. Função de e-mail com Anexos
     def enviar_email():
         try:
             remetente = st.secrets["email_user"]
@@ -167,6 +170,7 @@ def app():
             corpo = f"Relatório Semanal\nTOTAL ALTA: {br_money(t_alta)}\nTOTAL EMERG: {br_money(t_emerg)}"
             msg.attach(MIMEText(corpo, 'plain'))
 
+            # Anexar gráficos
             for chart, nome in [(fig_alta, "ALTA"), (fig_emerg, "EMERGENCIAL")]:
                 if chart:
                     png_data = vlc.vegalite_to_png(chart.to_json())
