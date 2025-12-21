@@ -76,11 +76,11 @@ def criar_grafico_formatado(df, titulo, cor_barra):
 
     return chart
 
-# --- LÓGICA DO DASHBOARD ---
 def app():
     st.title("📊 Dashboard Orçamentário Semanal")
-    
-    # Filtros de Data
+    st.markdown("---")
+
+    # 1. Definição das variáveis de data (agora declaradas antes do uso)
     st.sidebar.header("📅 Filtro de Período")
     hoje = date.today()
     inicio_semana = hoje - timedelta(days=hoje.weekday())
@@ -89,6 +89,7 @@ def app():
     data_inicio = st.sidebar.date_input("Início", inicio_semana)
     data_fim = st.sidebar.date_input("Fim", fim_semana)
 
+    # 2. Carregamento dos dados
     with st.spinner("Carregando dados..."):
         data_dict = load_data(PLANILHA_NOME)
 
@@ -96,24 +97,31 @@ def app():
         st.error("Falha ao carregar planilha.")
         return
 
-    def preparar_ranking(aba_nome):
+    # 3. Função preparar_ranking COM as variáveis declaradas nos argumentos
+    def preparar_ranking(aba_nome, d_inicio, d_fim):
         df = data_dict.get(aba_nome, pd.DataFrame())
-        if df.empty: return pd.DataFrame()
+        if df.empty: 
+            return pd.DataFrame()
         
-        # Garante que a coluna DATA seja lida corretamente
+        # Limpeza e Conversão
+        df = df.copy()
+        df['UNIDADE'] = df['UNIDADE'].astype(str).str.strip().str.upper()
         df['DATA_DT'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce').dt.date
         df['VALOR_NUM'] = df['VALOR'].apply(valor_brasileiro)
         
-        # Filtro
-        mask = (df['DATA_DT'] >= data_inicio) & (df['DATA_DT'] <= data_fim)
+        # Filtro usando as variáveis passadas
+        mask = (df['DATA_DT'] >= d_inicio) & (df['DATA_DT'] <= d_fim)
         df_f = df.loc[mask].copy()
         
-        if df_f.empty: return pd.DataFrame()
+        if df_f.empty: 
+            return pd.DataFrame()
         
+        # Agrupamento para consolidar unidades repetidas (como EXPEDIÇÃO)
         return df_f.groupby('UNIDADE')['VALOR_NUM'].sum().reset_index().sort_values('VALOR_NUM', ascending=False)
 
-    df_alta = preparar_ranking('ALTA')
-    df_emerg = preparar_ranking('EMERGENCIAL')
+    # 4. Chamada da função passando as datas corretamente
+    df_alta = preparar_ranking('ALTA', data_inicio, data_fim)
+    df_emerg = preparar_ranking('EMERGENCIAL', data_inicio, data_fim)
 
     # --- DEPURAÇÃO (REMOVA APÓS FUNCIONAR) ---
     with st.expander("🔍 Verificação de Dados (Debug)"):
@@ -124,17 +132,14 @@ def app():
         col_d2.write("Tabela EMERGENCIAL filtrada:")
         col_d2.dataframe(df_emerg)
 
-    # Criar Gráficos
+# --- RESTANTE DO CÓDIGO (Gráficos e E-mail) ---
     fig_alta = criar_grafico_formatado(df_alta, "Ranking ALTA", "#00A2E8")
     fig_emerg = criar_grafico_formatado(df_emerg, "Ranking EMERGENCIAL", "#FF4B4B")
 
     # Exibição
-    st.markdown("---")
     if fig_alta:
         st.altair_chart(fig_alta, use_container_width=True)
-    else:
-        st.warning("Sem dados para ALTA no período.")
-
+    
     if fig_emerg:
         st.altair_chart(fig_emerg, use_container_width=True)
     else:
