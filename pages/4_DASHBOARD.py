@@ -44,35 +44,37 @@ def criar_grafico_formatado(df, titulo, cor_barra):
     if df.empty:
         return None
     
-    # Base do gráfico
-    base = alt.Chart(df).encode(
+    # Garantimos que os valores são floats e não nulos para o Altair não se perder
+    df['VALOR_NUM'] = df['VALOR_NUM'].fillna(0).astype(float)
+    
+    # Criamos o gráfico
+    bars = alt.Chart(df).mark_bar(
+        color=cor_barra,
+        cornerRadiusEnd=5,
+        height=20  # Altura fixa da barra
+    ).encode(
         y=alt.Y('UNIDADE:N', sort='-x', title=None),
-        x=alt.X('VALOR_NUM:Q', title=None, axis=None)
+        x=alt.X('VALOR_NUM:Q', title=None, axis=None, scale=alt.Scale(nice=True)),
+        tooltip=['UNIDADE', alt.Tooltip('VALOR_NUM:Q', format=',.2f')]
     )
 
-    # Camada 1: As barras
-    bars = base.mark_bar(color=cor_barra, cornerRadiusEnd=3).encode(
-        tooltip=['UNIDADE', alt.Tooltip('VALOR_NUM:Q', format=',.2f', title="Total")]
-    )
-
-    # Camada 2: O texto (Ajustado para ser visível no Dark Mode)
-    text = base.mark_text(
+    text = bars.mark_text(
         align='left',
         baseline='middle',
-        dx=5, 
-        color='white', # Forçado branco para aparecer no fundo escuro da imagem
-        fontWeight='bold',
-        size=12
+        dx=5,
+        color='white', # Texto branco para garantir visão no fundo preto
+        fontWeight='bold'
     ).encode(
         text=alt.Text('VALOR_NUM:Q', format='R$ ,.2f')
     )
 
-    # Combinação
     chart = (bars + text).properties(
-        title=alt.TitleParams(text=titulo, anchor='start', fontSize=18),
-        width=500, # Largura fixa para garantir espaço para o texto
-        height=alt.Step(40) 
-    ).configure_view(strokeOpacity=0)
+        title=alt.TitleParams(text=titulo, anchor='start', color='white', fontSize=16),
+        width=500, # Largura fixa em pixels para teste (mude para 'container' se funcionar)
+        height=alt.Step(40)
+    ).configure_view(
+        strokeOpacity=0
+    )
 
     return chart
 
@@ -115,10 +117,11 @@ def app():
         
         if df_f.empty: 
             return pd.DataFrame()
-        
-        # Agrupamento para consolidar unidades repetidas (como EXPEDIÇÃO)
-        return df_f.groupby('UNIDADE')['VALOR_NUM'].sum().reset_index().sort_values('VALOR_NUM', ascending=False)
-
+        # Agrupa, soma, reseta o índice e remove unidades que somam R$ 0,00
+        df_final = df_f.groupby('UNIDADE')['VALOR_NUM'].sum().reset_index()
+        df_final = df_final[df_final['VALOR_NUM'] > 0] # Remove zeros
+        return df_final.sort_values('VALOR_NUM', ascending=False)
+    
     # 4. Chamada da função passando as datas corretamente
     df_alta = preparar_ranking('ALTA', data_inicio, data_fim)
     df_emerg = preparar_ranking('EMERGENCIAL', data_inicio, data_fim)
