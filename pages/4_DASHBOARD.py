@@ -72,7 +72,7 @@ def gerar_figura(df, titulo, cor):
         ),
         
         # Margens: 'l' é a esquerda. Aumentamos para 200 para nomes longos
-        margin=dict(l=150, r=50, t=60, b=80), 
+        margin=dict(l=150, r=50, t=60, b=100), 
         height=500, # Aumentado para dar mais respiro entre as barras
         title=dict(x=0.5, font=dict(size=22)) # Centraliza o título
     )
