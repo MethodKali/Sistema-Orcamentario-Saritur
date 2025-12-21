@@ -22,7 +22,7 @@ def preparar_dados_plotly(df, d_inicio, d_fim):
     if df.empty: return pd.DataFrame()
     df = df.copy()
     
-    # Limpeza e Conversão
+    # Limpeza de espaços e padronização de nomes para evitar duplicatas por erro de digitação
     df['UNIDADE'] = df['UNIDADE'].astype(str).str.strip().str.upper()
     df['DATA_DT'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce').dt.date
     
@@ -34,13 +34,19 @@ def preparar_dados_plotly(df, d_inicio, d_fim):
 
     df['VALOR_NUM'] = df['VALOR'].apply(limpar_moeda)
     
-    # Filtro e Agrupamento
+    # Filtro de data
     mask = (df['DATA_DT'] >= d_inicio) & (df['DATA_DT'] <= d_fim)
-    ranking = df.loc[mask].groupby('UNIDADE')['VALOR_NUM'].sum().reset_index()
+    df_filtrado = df.loc[mask]
+    
+    # Agrupamento e Soma (Garante que unidades iguais sejam somadas)
+    ranking = df_filtrado.groupby('UNIDADE')['VALOR_NUM'].sum().reset_index()
     return ranking.sort_values('VALOR_NUM', ascending=True)
 
 def gerar_figura(df, titulo, cor):
     if df.empty: return None
+    
+    # Altura dinâmica: mais barras = gráfico mais alto para não espremer as barras
+    altura_dinamica = max(450, len(df) * 45)
     
     fig = px.bar(df, x='VALOR_NUM', y='UNIDADE', orientation='h', 
                  text='VALOR_NUM', title=titulo)
@@ -50,55 +56,78 @@ def gerar_figura(df, titulo, cor):
         texttemplate='R$ %{text:,.2f}', 
         textposition='outside',
         cliponaxis=False,
-        textfont=dict(color="gray", size=12)
+        textfont=dict(color="white", size=13)
     )
     
     fig.update_layout(
         paper_bgcolor='#111111', 
         plot_bgcolor='#111111',
         font=dict(color="white"),
+        height=altura_dinamica,
         
-        # Ajuste crucial para os nomes das unidades
+        # Margem esquerda aumentada para nomes longos como "JARDIM MONTANHÊS"
+        margin=dict(l=220, r=120, t=80, b=50), 
+        
         yaxis=dict(
             title=None, 
-            automargin=True, # Faz o Plotly calcular o espaço necessário
-            tickfont=dict(color="white", size=12),
-            dtick=1 # Garante que cada unidade apareça individualmente
+            automargin=True,
+            tickfont=dict(color="white", size=13),
+            categoryorder='total ascending',
+            dtick=1 # Garante que cada nome de unidade apareça
         ),
         
         xaxis=dict(
             visible=False, 
-            range=[0, df['VALOR_NUM'].max() * 1.35] # Aumentado para o valor R$ não sumir
+            # Define o limite do eixo X com folga para o texto do valor não ser cortado
+            range=[0, df['VALOR_NUM'].max() * 1.4] 
         ),
         
-        # Margens: 'l' é a esquerda. Aumentamos para 200 para nomes longos
-        margin=dict(l=150, r=10, t=60, b=60), 
-        height=600, # Aumentado para dar mais respiro entre as barras
-        title=dict(x=0.5, font=dict(size=22)) # Centraliza o título
+        title=dict(x=0.5, font=dict(size=22))
     )
-    
-    # Força a exibição de todas as categorias sem pular nenhuma
-    fig.update_yaxes(type='category')
-    
     return fig
+
 def app():
     st.title("📊 Gestão de Gastos Saritur")
     
-    # Filtros
+    # --- FILTROS NO SIDEBAR ---
     hoje = date.today()
     inicio_semana = hoje - timedelta(days=hoje.weekday())
     data_inicio = st.sidebar.date_input("Início", inicio_semana)
     data_fim = st.sidebar.date_input("Fim", inicio_semana + timedelta(days=6))
 
-    # Processamento
+    # --- PROCESSAMENTO DOS DADOS ---
     data_dict = load_data(PLANILHA_NOME)
-    df_alta = preparar_dados_plotly(data_dict.get('ALTA', pd.DataFrame()), data_inicio, data_fim)
+    
+    # 1. Ranking ALTA (Filtrado por status "PEDIDO")
+    df_alta_raw = data_dict.get('ALTA', pd.DataFrame())
+    if not df_alta_raw.empty:
+        # Aplicação do filtro de status antes do processamento de valores
+        df_alta_raw = df_alta_raw[df_alta_raw['STATUS'].astype(str).str.strip().str.upper() == "PEDIDO"]
+    df_alta = preparar_dados_plotly(df_alta_raw, data_inicio, data_fim)
+
+    # 2. Ranking EMERGENCIAL (Sem filtro de status)
     df_emerg = preparar_dados_plotly(data_dict.get('EMERGENCIAL', pd.DataFrame()), data_inicio, data_fim)
 
-    # Exibição na Tela
+    # 3. Gráfico CONSOLIDADO (Soma ALTA + EMERGENCIAL)
+    df_total = pd.concat([df_alta, df_emerg], ignore_index=True)
+    if not df_total.empty:
+        # Re-agrupa para somar unidades que aparecem em ambas as abas
+        df_total = df_total.groupby('UNIDADE')['VALOR_NUM'].sum().reset_index()
+        df_total = df_total.sort_values('VALOR_NUM', ascending=True)
+
+    # --- EXIBIÇÃO NA TELA ---
+    st.markdown("---")
+    
+    # Gráfico Total (Destaque no topo)
+    fig_total = gerar_figura(df_total, "Total Gasto na ALTA e EMERGENCIAL", "#2ECC71")
+    if fig_total:
+        st.plotly_chart(fig_total, use_container_width=True)
+    else:
+        st.info("Sem dados consolidados para o período.")
+
     col1, col2 = st.columns(2)
     with col1:
-        fig_a = gerar_figura(df_alta, "Ranking ALTA", "#00A2E8")
+        fig_a = gerar_figura(df_alta, "Ranking ALTA (Status: PEDIDO)", "#00A2E8")
         if fig_a: 
             st.plotly_chart(fig_a, use_container_width=True)
     with col2:
@@ -106,7 +135,7 @@ def app():
         if fig_e: 
             st.plotly_chart(fig_e, use_container_width=True)
 
-    # Função de E-mail
+    # --- FUNÇÃO DE ENVIO DE E-MAIL ---
     def enviar():
         try:
             user = st.secrets["email_user"]
@@ -117,29 +146,37 @@ def app():
             msg['From'] = user
             msg['To'] = "kerlesalves@gmail.com"
             
-            msg.attach(MIMEText(f"Relatório de gastos por unidade.\nPeríodo: {data_inicio} a {data_fim}", 'plain'))
+            corpo = f"Seguem em anexo os rankings de gastos por unidade.\nPeríodo: {data_inicio} a {data_fim}"
+            msg.attach(MIMEText(corpo, 'plain'))
 
-            for fig, nome in [(fig_a, "ALTA"), (fig_e, "EMERGENCIAL")]:
+            # Lista de gráficos para anexo
+            graficos = [
+                (fig_total, "Total_Consolidado"),
+                (fig_a, "Ranking_ALTA"),
+                (fig_e, "Ranking_EMERGENCIAL")
+            ]
+
+            for fig, nome in graficos:
                 if fig:
-                    # Tenta gerar a imagem. Se o Kaleido der erro de Chrome, 
-                    # ele avisa mas não trava o envio do texto.
                     try:
-                        img_bytes = fig.to_image(format="png")
+                        # Converte a figura Plotly para imagem estática (PNG)
+                        img_bytes = fig.to_image(format="png", width=1000, height=800)
                         part = MIMEImage(img_bytes)
                         part.add_header('Content-Disposition', 'attachment', filename=f"{nome}.png")
                         msg.attach(part)
                     except Exception as e:
-                        st.error(f"Erro ao gerar imagem {nome}: {e}")
+                        st.error(f"Erro ao anexar imagem {nome}: {e}")
 
             with smtplib.SMTP('smtp.gmail.com', 587) as server:
                 server.starttls()
                 server.login(user, password)
                 server.send_message(msg)
-            st.success("✅ Enviado!")
+            st.success("✅ Relatório enviado com sucesso!")
         except Exception as e:
-            st.error(f"Falha: {e}")
+            st.error(f"Falha no envio do e-mail: {e}")
 
-    if st.button("📧 ENVIAR AGORA"):
+    st.markdown("---")
+    if st.button("📧 ENVIAR RELATÓRIO POR E-MAIL"):
         enviar()
 
 if __name__ == "__main__":
