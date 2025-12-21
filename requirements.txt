@@ -7,4 +7,4 @@ oauth2client
 vl-convert-python
 plotly
 plotly.express
-kaleido
+kaleido==0.1.0.post1
