@@ -121,7 +121,7 @@ def app():
     
     # 1. Gráfico Total Consolidado (Destaque no topo)
     st.subheader("📊 Visão Geral Consolidada")
-    fig_total = gerar_figura(df_total, f"Total Gasto na ALTA e EMERGENCIAL {data_inicio.strftime('%d/%m')} a {data_fim.strftime('%d/%m')}", "#106332")
+    fig_total = gerar_figura(df_total, f"Ranking - Total Gasto na ALTA e EMERGENCIAL {data_inicio.strftime('%d/%m')} a {data_fim.strftime('%d/%m')}", "#106332")
     if fig_total:
         st.plotly_chart(fig_total, use_container_width=True)
     else:
