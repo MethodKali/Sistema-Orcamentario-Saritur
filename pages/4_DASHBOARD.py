@@ -116,24 +116,36 @@ def app():
         df_total = df_total.sort_values('VALOR_NUM', ascending=True)
 
     # --- EXIBIÇÃO NA TELA ---
+# --- EXIBIÇÃO NA TELA (UM EMBAIXO DO OUTRO) ---
     st.markdown("---")
     
-    # Gráfico Total (Destaque no topo)
+    # 1. Gráfico Total Consolidado (Destaque no topo)
+    st.subheader("📊 Visão Geral Consolidada")
     fig_total = gerar_figura(df_total, "Total Gasto na ALTA e EMERGENCIAL", "#2ECC71")
     if fig_total:
         st.plotly_chart(fig_total, use_container_width=True)
     else:
         st.info("Sem dados consolidados para o período.")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        fig_a = gerar_figura(df_alta, "Ranking ALTA (Status: PEDIDO)", "#00A2E8")
-        if fig_a: 
-            st.plotly_chart(fig_a, use_container_width=True)
-    with col2:
-        fig_e = gerar_figura(df_emerg, "Ranking EMERGENCIAL", "#FF4B4B")
-        if fig_e: 
-            st.plotly_chart(fig_e, use_container_width=True)
+    st.markdown("---")
+
+    # 2. Ranking ALTA (Agora ocupando a largura total)
+    st.subheader("🔵 Detalhamento ALTA")
+    fig_a = gerar_figura(df_alta, "Ranking ALTA (Status: PEDIDO)", "#00A2E8")
+    if fig_a: 
+        st.plotly_chart(fig_a, use_container_width=True)
+    else:
+        st.warning("Sem dados para a aba ALTA com status 'PEDIDO'.")
+
+    st.markdown("---")
+
+    # 3. Ranking EMERGENCIAL (Agora ocupando a largura total)
+    st.subheader("🔴 Detalhamento EMERGENCIAL")
+    fig_e = gerar_figura(df_emerg, "Ranking EMERGENCIAL", "#FF4B4B")
+    if fig_e: 
+        st.plotly_chart(fig_e, use_container_width=True)
+    else:
+        st.warning("Sem dados para a aba EMERGENCIAL.")    st.plotly_chart(fig_e, use_container_width=True)
 
     # --- FUNÇÃO DE ENVIO DE E-MAIL ---
     def enviar():
