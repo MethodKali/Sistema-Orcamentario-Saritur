@@ -77,10 +77,11 @@ def preparar_tabela_amanha(df):
 def gerar_figura(df, titulo, cor):
     if df.empty: return None
     
-    # 1. Calcula o total para o rótulo
+    # 1. Cálculo do total para o rodapé
     total_gasto = df['VALOR_NUM'].sum()
     total_formatado = f"TOTAL: R$ {total_gasto:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
+    # Altura dinâmica baseada no número de barras
     altura_dinamica = max(450, len(df) * 45)
     
     fig = px.bar(df, x='VALOR_NUM', y='UNIDADE', orientation='h', text='VALOR_NUM', title=titulo)
@@ -98,17 +99,18 @@ def gerar_figura(df, titulo, cor):
         plot_bgcolor="#FFFFFF", 
         font=dict(color="black"), 
         height=altura_dinamica, 
-        margin=dict(l=220, r=120, t=100, b=50), # Aumentei margem superior para o rótulo
+        # Aumentamos a margem inferior (b=80) para caber o total no pé
+        margin=dict(l=220, r=120, t=80, b=80), 
         
-        # 2. Adiciona o Rótulo do Total
+        # 2. Adiciona o Rótulo do Total no Rodapé
         annotations=[dict(
-            x=0.5, # Centralizado horizontalmente
-            y=1.07, # Posicionado logo acima do gráfico
+            x=0.5,           # Centralizado horizontalmente
+            y=-0.12,         # Posicionado abaixo do gráfico (eixo Y negativo)
             xref="paper",
             yref="paper",
             text=f"<b>{total_formatado}</b>",
             showarrow=False,
-            font=dict(size=18, color=cor), # Usa a mesma cor do gráfico para facilitar a leitura
+            font=dict(size=20, color=cor), # Cor combinando com as barras
             align="center"
         )],
 
