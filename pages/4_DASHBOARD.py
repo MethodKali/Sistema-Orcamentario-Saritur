@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import smtplib
 import os
 import sys
@@ -10,147 +9,119 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 from datetime import date, timedelta
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Dashboard Saritur", layout="wide")
-
-# --- IMPORTAÇÃO DOS DADOS (BACKLOG.py) ---
+# --- IMPORTAÇÃO DOS DADOS ---
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 try:
     from BACKLOG import load_data, PLANILHA_NOME
-except ImportError:
-    try:
-        from pages.BACKLOG import load_data, PLANILHA_NOME
-    except ImportError:
-        st.error("Erro: Arquivo BACKLOG.py não encontrado.")
-        st.stop()
+except:
+    st.error("Erro ao carregar BACKLOG.py")
+    st.stop()
 
-# --- TRATAMENTO DE DADOS COM PANDAS ---
-def tratar_e_filtrar(df, d_inicio, d_fim):
+# --- TRATAMENTO DE DADOS (PANDAS) ---
+def preparar_dados_plotly(df, d_inicio, d_fim):
     if df.empty: return pd.DataFrame()
-    
     df = df.copy()
-    # Limpeza de nomes e conversão de valores
-    df['UNIDADE'] = df['UNIDADE'].astype(str).str.strip().str.upper()
     
-    # Lógica de conversão monetária brasileira
-    def converter_valor(v):
+    # Limpeza e Conversão
+    df['UNIDADE'] = df['UNIDADE'].astype(str).str.strip().str.upper()
+    df['DATA_DT'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce').dt.date
+    
+    def limpar_moeda(v):
         if pd.isna(v) or v == "": return 0.0
         s = str(v).replace("R$", "").replace(" ", "").replace(".", "").replace(",", ".")
         try: return float(s)
         except: return 0.0
 
-    df['VALOR_NUM'] = df['VALOR'].apply(converter_valor)
-    df['DATA_DT'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce').dt.date
+    df['VALOR_NUM'] = df['VALOR'].apply(limpar_moeda)
     
-    # Filtro de período
+    # Filtro e Agrupamento
     mask = (df['DATA_DT'] >= d_inicio) & (df['DATA_DT'] <= d_fim)
-    df_f = df.loc[mask]
-    
-    # Agrupamento por Unidade (Lógica de valor gasto)
-    ranking = df_f.groupby('UNIDADE')['VALOR_NUM'].sum().reset_index()
-    return ranking.sort_values('VALOR_NUM', ascending=True) # Ascending True para o Plotly mostrar o maior no topo
+    ranking = df.loc[mask].groupby('UNIDADE')['VALOR_NUM'].sum().reset_index()
+    return ranking.sort_values('VALOR_NUM', ascending=True)
 
-# --- CRIAÇÃO DO GRÁFICO COM PLOTLY ---
-def criar_grafico_plotly(df, titulo, cor):
+# --- GRÁFICO PLOTLY ---
+def gerar_figura(df, titulo, cor):
     if df.empty: return None
+    # Criando o gráfico de barras horizontais
+    fig = px.bar(df, x='VALOR_NUM', y='UNIDADE', orientation='h', 
+                 text='VALOR_NUM', title=titulo)
     
-    fig = px.bar(
-        df, 
-        x='VALOR_NUM', 
-        y='UNIDADE',
-        orientation='h',
-        text='VALOR_NUM', # Insere o valor na frente da barra
-        title=titulo
-    )
-    
-    # Estilização "Atrativa"
     fig.update_traces(
         marker_color=cor,
-        texttemplate='R$ %{text:,.2f}', # Formatação contábil
+        texttemplate='R$ %{text:,.2f}', 
         textposition='outside',
         cliponaxis=False
     )
     
     fig.update_layout(
-        plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
         font=dict(color="white"),
-        xaxis=dict(showgrid=False, visible=False),
-        yaxis=dict(showgrid=False, title=""),
-        margin=dict(l=20, r=100, t=50, b=20), # Espaço para o texto não cortar
+        xaxis=dict(visible=False),
+        yaxis=dict(title=None),
+        margin=dict(l=20, r=100, t=50, b=20),
         height=400
     )
     return fig
 
 def app():
-    st.title("📊 Relatório de Gastos por Unidade")
+    st.title("📊 Gestão de Gastos Saritur")
     
-    # --- FILTROS NO SIDEBAR ---
-    st.sidebar.header("📅 Período do Relatório")
+    # Filtros
     hoje = date.today()
-    inicio_padrao = hoje - timedelta(days=hoje.weekday())
-    data_inicio = st.sidebar.date_input("Data Inicial", inicio_padrao)
-    data_fim = st.sidebar.date_input("Data Final", inicio_padrao + timedelta(days=6))
+    inicio_semana = hoje - timedelta(days=hoje.weekday())
+    data_inicio = st.sidebar.date_input("Início", inicio_semana)
+    data_fim = st.sidebar.date_input("Fim", inicio_semana + timedelta(days=6))
 
-    # --- PROCESSAMENTO ---
+    # Processamento
     data_dict = load_data(PLANILHA_NOME)
-    
-    df_alta = tratar_e_filtrar(data_dict.get('ALTA', pd.DataFrame()), data_inicio, data_fim)
-    df_emerg = tratar_e_filtrar(data_dict.get('EMERGENCIAL', pd.DataFrame()), data_inicio, data_fim)
+    df_alta = preparar_dados_plotly(data_dict.get('ALTA', pd.DataFrame()), data_inicio, data_fim)
+    df_emerg = preparar_dados_plotly(data_dict.get('EMERGENCIAL', pd.DataFrame()), data_inicio, data_fim)
 
-    # --- VISUALIZAÇÃO NO STREAMLIT ---
+    # Exibição na Tela
     col1, col2 = st.columns(2)
-    
     with col1:
-        st.subheader("Ranking ALTA")
-        fig_alta = criar_grafico_plotly(df_alta, "Gastos Semanais - ALTA", "#00A2E8")
-        if fig_alta: st.plotly_chart(fig_alta, use_container_width=True)
-        else: st.info("Sem dados para este período.")
-
+        fig_a = gerar_figura(df_alta, "Ranking ALTA", "#00A2E8")
+        if fig_a: st.plotly_chart(fig_a, use_container_width=True)
     with col2:
-        st.subheader("Ranking EMERGENCIAL")
-        fig_emerg = criar_grafico_plotly(df_emerg, "Gastos Semanais - EMERGENCIAL", "#FF4B4B")
-        if fig_emerg: st.plotly_chart(fig_emerg, use_container_width=True)
-        else: st.info("Sem dados para este período.")
+        fig_e = gerar_figura(df_emerg, "Ranking EMERGENCIAL", "#FF4B4B")
+        if fig_e: st.plotly_chart(fig_e, use_container_width=True)
 
-    # --- LÓGICA DE ENVIO DE E-MAIL ---
-    def enviar_relatorio():
+    # Função de E-mail
+    def enviar():
         try:
             user = st.secrets["email_user"]
             password = st.secrets["email_password"]
             
             msg = MIMEMultipart()
-            msg['Subject'] = f"Relatório Saritur - {data_inicio.strftime('%d/%m')} a {data_fim.strftime('%d/%m')}"
+            msg['Subject'] = f"Relatório Saritur: {data_inicio.strftime('%d/%m')} a {data_fim.strftime('%d/%m')}"
             msg['From'] = user
             msg['To'] = "kerlesalves@gmail.com"
+            
+            msg.attach(MIMEText(f"Relatório de gastos por unidade.\nPeríodo: {data_inicio} a {data_fim}", 'plain'))
 
-            corpo = f"""
-            Seguem em anexo os rankings de gastos por unidade.
-            Período: {data_inicio} a {data_fim}
-            """
-            msg.attach(MIMEText(corpo, 'plain'))
-
-            # Gerar PNG dos gráficos Plotly
-            for fig, nome in [(fig_alta, "ALTA"), (fig_emerg, "EMERGENCIAL")]:
+            for fig, nome in [(fig_a, "ALTA"), (fig_e, "EMERGENCIAL")]:
                 if fig:
-                    # Converte para imagem estática (bytes)
-                    img_bytes = fig.to_image(format="png", width=800, height=500)
-                    part = MIMEImage(img_bytes)
-                    part.add_header('Content-Disposition', 'attachment', filename=f"Ranking_{nome}.png")
-                    msg.attach(part)
+                    # Tenta gerar a imagem. Se o Kaleido der erro de Chrome, 
+                    # ele avisa mas não trava o envio do texto.
+                    try:
+                        img_bytes = fig.to_image(format="png")
+                        part = MIMEImage(img_bytes)
+                        part.add_header('Content-Disposition', 'attachment', filename=f"{nome}.png")
+                        msg.attach(part)
+                    except Exception as e:
+                        st.error(f"Erro ao gerar imagem {nome}: {e}")
 
             with smtplib.SMTP('smtp.gmail.com', 587) as server:
                 server.starttls()
                 server.login(user, password)
                 server.send_message(msg)
-            st.success("✅ E-mail enviado com sucesso!")
-            
+            st.success("✅ Enviado!")
         except Exception as e:
-            st.error(f"Erro no envio: {e}")
+            st.error(f"Falha: {e}")
 
-    st.markdown("---")
-    if st.button("🚀 GERAR E ENVIAR RELATÓRIO POR E-MAIL", use_container_width=True):
-        enviar_relatorio()
+    if st.button("📧 ENVIAR AGORA"):
+        enviar()
 
 if __name__ == "__main__":
     app()

@@ -1,9 +1,8 @@
 streamlit
 pandas
-altair
-pytz
+plotly
+kaleido==0.2.1
+vl-convert-python
 gspread
 oauth2client
-vl-convert-python
-plotly
-kaleido==0.1.0.post1
+pytz
