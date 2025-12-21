@@ -4,4 +4,4 @@ altair
 pytz
 gspread
 oauth2client
-vl_convert 
+vl-convert-python
