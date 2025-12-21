@@ -56,13 +56,13 @@ def gerar_figura(df, titulo, cor):
         texttemplate='R$ %{text:,.2f}', 
         textposition='outside',
         cliponaxis=False,
-        textfont=dict(color="white", size=13)
+        textfont=dict(color="black", size=13)
     )
     
     fig.update_layout(
         paper_bgcolor="#FFFFFF", 
         plot_bgcolor="#FFFFFF",
-        font=dict(color="white"),
+        font=dict(color="black"),
         height=altura_dinamica,
         
         # Margem esquerda aumentada para nomes longos como "JARDIM MONTANHÊS"
@@ -71,7 +71,7 @@ def gerar_figura(df, titulo, cor):
         yaxis=dict(
             title=None, 
             automargin=True,
-            tickfont=dict(color="white", size=13),
+            tickfont=dict(color="black", size=13),
             categoryorder='total ascending',
             dtick=1 # Garante que cada nome de unidade apareça
         ),
