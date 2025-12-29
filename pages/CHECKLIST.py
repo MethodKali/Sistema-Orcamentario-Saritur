@@ -18,7 +18,8 @@ def app():
     tarefas_tarde = [
         "Lançamentos na EMERGENCIAL",
         "Revisar gastos da aba EMERGENCIAL",
-        "Preparar programação para o dia seguinte"
+        "Preparar programação para o dia seguinte",
+        "Acesse o N8N: https://first-project.app.n8n.cloud/workflow/wLYYG2BNTSiSLkPN\nAcesse a API do Facebook: https://developers.facebook.com/apps/895177043047943/whatsapp-business/api-testing/?business_id=182588088036619"
     ]
     # -----------------------------------------------
 
