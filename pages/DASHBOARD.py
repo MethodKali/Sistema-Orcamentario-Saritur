@@ -173,7 +173,7 @@ def app():
             user, password = st.secrets["email_user"], st.secrets["email_password"]
             msg = MIMEMultipart()
             msg['Subject'] = f"Relatório Saritur: {data_inicio.strftime('%d/%m')} a {data_fim.strftime('%d/%m')}"
-            msg['From'], msg['To'] = user, "michael.sotero@saritur.com.br"
+            msg['From'], msg['To'] = user, "kerlesalves@gmail.com"
             msg.attach(MIMEText(f" Relatório Orçamentario Semanal.\nPeríodo: {data_inicio} a {data_fim}\nSeguem os anexos abaixo:", 'plain'))
 
             # 1. Anexos de Rankings (PNG)
