@@ -87,20 +87,15 @@ else:
 
 st.title("📝 Gestão de Pedidos e Solicitações")
 
-# Exibe mensagens persistentes do session_state (se houver)
+# Exibição de mensagens do session_state
 if "mensagem_sucesso" in st.session_state:
     st.success(st.session_state.mensagem_sucesso)
-    # Limpa após mostrar uma vez para não ficar infinito
     del st.session_state.mensagem_sucesso
-
 if "alertas_info" in st.session_state:
-    for msg in st.session_state.alertas_info:
-        st.info(msg)
+    for msg in st.session_state.alertas_info: st.info(msg)
     del st.session_state.alertas_info
-
 if "alertas_warning" in st.session_state:
-    for msg in st.session_state.alertas_warning:
-        st.warning(msg)
+    for msg in st.session_state.alertas_warning: st.warning(msg)
     del st.session_state.alertas_warning
 
 # FORMULÁRIO DE CADASTRO
@@ -115,7 +110,13 @@ with st.form("form_cadastro", clear_on_submit=True):
         fornecedor = st.text_input("Fornecedor")
     with col2:
         valor = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
-        status = st.selectbox("Status *", ["COTAÇÃO", "PEDIDO", "APROVADA", "NÃO APROVADA"])
+        
+        # STATUS DINÂMICO (Apenas para ALTA)
+        if aba_dest == "ALTA":
+            status_selecionado = st.selectbox("Status Solicitação *", ["COTAÇÃO", "PEDIDO", "APROVADA", "NÃO APROVADA"])
+        else:
+            status_selecionado = st.text_input("Status Emergencial (Opcional)", value="PENDENTE")
+            
         solicitacao_raw = st.text_input("Nº Solicitação")
         pedidos_raw = st.text_area("Bloco de Pedidos")
     
@@ -124,68 +125,89 @@ with st.form("form_cadastro", clear_on_submit=True):
 if btn_cadastrar:
     s_nums = extrair_numeros_da_string(solicitacao_raw)
     p_nums = extrair_numeros_da_string(pedidos_raw)
-    todos_itens = p_nums + s_nums
+    todos_itens = s_nums + p_nums
     
     if not todos_itens:
         st.warning("Nenhum número detectado.")
     else:
         mapa_geral = buscar_em_todas_as_abas_detalhado(sh, todos_itens)
-        
-        # Listas para guardar as mensagens e mostrar após o rerun
         st.session_state.alertas_warning = []
         st.session_state.alertas_info = []
 
-        if status == "COTAÇÃO":
-            for s in s_nums:
-                if s in mapa_geral:
-                    st.session_state.alertas_warning.append(f"⚠️ A solicitação {s} já está em COTAÇÃO na aba {mapa_geral[s]}")
-                    mapa_geral.pop(s)
-                else:
-                    st.session_state.alertas_info.append(f"ℹ️ A solicitação {s} foi incluída como COTAÇÃO.")
+        # Lógica de validação e alertas para ALTA
+        if aba_dest == "ALTA":
+            # 1. Tratar Solicitações
+            if status_selecionado == "COTAÇÃO":
+                for s in s_nums:
+                    if s in mapa_geral:
+                        st.session_state.alertas_warning.append(f"⚠️ A solicitação {s} já está em COTAÇÃO na aba {mapa_geral[s]}")
+                        mapa_geral.pop(s)
+                    else:
+                        st.session_state.alertas_info.append(f"ℹ️ A solicitação {s} foi incluída como COTAÇÃO.")
+            
+            if status_selecionado == "PEDIDO":
+                for s in s_nums:
+                    if s in mapa_geral: mapa_geral.pop(s)
 
-        if status == "PEDIDO":
-            for s in s_nums:
-                if s in mapa_geral: mapa_geral.pop(s)
+            # 2. Tratar Pedidos (Sempre status PEDIDO, então removemos do mapa de erro se forem ser substituídos ou apenas ignora erro se for a regra da empresa)
+            for p in p_nums:
+                if p in mapa_geral:
+                    # Se o pedido já existe, você quer bloquear ou sobrescrever? 
+                    # Por padrão, mantemos o erro de duplicata para segurança.
+                    pass 
 
+        # Se houver duplicata fatal (números que já existem e não foram tratados acima)
         if mapa_geral:
             for num, aba in mapa_geral.items():
                 st.error(f"❌ O número {num} já existe na aba {aba}!")
             st.stop()
 
-        # Cadastro
+        # Exclusão automática (Só para ALTA quando a solicitação vira PEDIDO)
         msg_exc = ""
-        if status == "PEDIDO" and s_nums:
+        if aba_dest == "ALTA" and status_selecionado == "PEDIDO" and s_nums:
             q = excluir_por_numero(sh, "ALTA", s_nums) + excluir_por_numero(sh, "EMERGENCIAL", s_nums)
             if q > 0: msg_exc = f" (Solicitação {', '.join(s_nums)} removida)"
 
+        # --- CADASTRO FINAL ---
         ws = sh.worksheet(aba_dest)
         dt_f = data_cad.strftime("%d/%m/%Y")
         col_ref = 5 if aba_dest == "ALTA" else 4
         
-        for item in todos_itens:
+        # Cadastro das Solicitações (Status do seletor)
+        for item in s_nums:
             prox = get_actual_next_row(ws, col_ref)
             if aba_dest == "ALTA":
-                linha = [f'=IF(B{prox}=""; ""; TODAY()-B{prox})', dt_f, unidade, carro, item, valor, fornecedor, status]
+                linha = [f'=IF(B{prox}=""; ""; TODAY()-B{prox})', dt_f, unidade, carro, item, valor, fornecedor, status_selecionado]
                 ws.update(f"A{prox}:H{prox}", [linha], value_input_option='USER_ENTERED')
             else:
-                linha = [unidade, datetime.now().strftime("%d/%m/%Y %H:%M:%S"), carro, item, valor, fornecedor, "", "", "", status]
+                linha = [unidade, datetime.now().strftime("%d/%m/%Y %H:%M:%S"), carro, item, valor, fornecedor, "", "", "", status_selecionado]
                 ws.update(f"A{prox}:J{prox}", [linha], value_input_option='USER_ENTERED')
 
-        st.session_state.mensagem_sucesso = f"✅ Cadastrado com sucesso na aba {aba_dest}!{msg_exc}"
+        # Cadastro dos Pedidos (Sempre Status PEDIDO para ALTA)
+        for item in p_nums:
+            prox = get_actual_next_row(ws, col_ref)
+            status_final_pedido = "PEDIDO" if aba_dest == "ALTA" else status_selecionado
+            
+            if aba_dest == "ALTA":
+                linha = [f'=IF(B{prox}=""; ""; TODAY()-B{prox})', dt_f, unidade, carro, item, valor, fornecedor, status_final_pedido]
+                ws.update(f"A{prox}:H{prox}", [linha], value_input_option='USER_ENTERED')
+            else:
+                linha = [unidade, datetime.now().strftime("%d/%m/%Y %H:%M:%S"), carro, item, valor, fornecedor, "", "", "", status_final_pedido]
+                ws.update(f"A{prox}:J{prox}", [linha], value_input_option='USER_ENTERED')
+
+        st.session_state.mensagem_sucesso = f"✅ Processamento concluído na aba {aba_dest}!{msg_exc}"
         st.rerun()
 
-# --- FORMULÁRIO DE EXCLUSÃO MANUAL (Agora limpa após submit) ---
+# --- EXCLUSÃO MANUAL ---
 st.markdown("---")
 st.subheader("🗑️ Exclusão Manual")
-with st.expander("Ferramentas de Exclusão"):
+with st.expander("Ferramentas"):
     with st.form("form_exclusao", clear_on_submit=True):
-        aba_ex = st.selectbox("Aba para exclusão", ["ALTA", "EMERGENCIAL"])
+        aba_ex = st.selectbox("Aba", ["ALTA", "EMERGENCIAL"])
         txt_ex = st.text_area("Cole os números para excluir")
-        btn_excluir = st.form_submit_button("EXCLUIR DEFINITIVAMENTE")
-        
-    if btn_excluir:
-        n_ex = extrair_numeros_da_string(txt_ex)
-        if n_ex:
-            qtd = excluir_por_numero(sh, aba_ex, n_ex)
-            st.session_state.mensagem_sucesso = f"🗑️ {qtd} linha(s) removida(s) da aba {aba_ex}!"
-            st.rerun()
+        if st.form_submit_button("EXCLUIR DEFINITIVAMENTE"):
+            n_ex = extrair_numeros_da_string(txt_ex)
+            if n_ex:
+                qtd = excluir_por_numero(sh, aba_ex, n_ex)
+                st.session_state.mensagem_sucesso = f"🗑️ {qtd} item(s) removido(s)!"
+                st.rerun()
