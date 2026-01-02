@@ -8,31 +8,14 @@ from datetime import datetime
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 SPREADSHEET_ID = "1n5I4U7siMsRB-eeAcWr56zNqudlcVbK7T2OImIjnMWs"
 
-# --- OPÇÕES PARA SELEÇÃO (ITEM 6) ---
-OPCOES_UNIDADE = ["INDÚSTRIA",
-    "JARDIM MONTANHÊS",
-    "SÃO MARCOS",
-    "NOVA LIMA",
-    "ITAÚNA",
-    "LAGOA SANTA",
-    "DURVAL DE BARROS",
-    "MONTES CLAROS",
-    "VARGINHA",
-    "NEVES",
-    "LAVRAS",
-    "IPATINGA",
-    "VESPASIANO",
-    "GARANTIA",
-    "VENDA DE VEÍCULOS",
-    "ADMINISTRATIVO",
-    "PREDIO ADM",
-    "EXPEDIÇÃO",
-    "CEL. FABRICIANO",
-    "OLIVEIRA",
-    "MORRO ALTO",
-    "TRANSNORTE",
-    "TIMOTEO",
-    "ADMINISTRAÇÃO"] # Adicione suas unidades aqui
+# --- OPÇÕES PARA SELEÇÃO ---
+OPCOES_UNIDADE = [
+    "INDÚSTRIA", "JARDIM MONTANHÊS", "SÃO MARCOS", "NOVA LIMA", "ITAÚNA", 
+    "LAGOA SANTA", "DURVAL DE BARROS", "MONTES CLAROS", "VARGINHA", "NEVES", 
+    "LAVRAS", "IPATINGA", "VESPASIANO", "GARANTIA", "VENDA DE VEÍCULOS", 
+    "ADMINISTRATIVO", "PREDIO ADM", "EXPEDIÇÃO", "CEL. FABRICIANO", "OLIVEIRA", 
+    "MORRO ALTO", "TRANSNORTE", "TIMOTEO", "ADMINISTRAÇÃO"
+]
 OPCOES_STATUS = ["NÃO APROVADA", "APROVADA", "COTAÇÃO", "PEDIDO"]
 OPCOES_AVALIACAO = ["EXPEDIÇÃO", "FINANCEIRO", "UNIDADE", "CREDITO"]
 
@@ -50,11 +33,10 @@ def get_gspread_client():
         return None
 
 def find_number_in_sheets(client, number):
-    """Busca um número de pedido/solicitação em ambas as abas (Item 3)"""
     sh = client.open_by_key(SPREADSHEET_ID)
     for aba_name in ["ALTA", "EMERGENCIAL"]:
         ws = sh.worksheet(aba_name)
-        # Busca na coluna F (6) na ALTA ou D (4) na EMERGENCIAL
+        # ALTA: PEDIDO na Col F(6) | EMERGENCIAL: PEDIDO na Col D(4)
         col_idx = 6 if aba_name == "ALTA" else 4
         all_values = ws.col_values(col_idx)
         if str(number) in all_values:
@@ -62,7 +44,6 @@ def find_number_in_sheets(client, number):
     return None, None
 
 def delete_row_by_request(client, request_number):
-    """Remove a linha de uma solicitação quando ela vira pedido (Item 2 - PEDIDO)"""
     aba, linha = find_number_in_sheets(client, request_number)
     if aba and linha:
         sh = client.open_by_key(SPREADSHEET_ID)
@@ -77,15 +58,12 @@ def app():
     if not client: return
 
     sh = client.open_by_key(SPREADSHEET_ID)
-    
     aba_selecionada = st.selectbox("Selecione a Aba de Destino", ["ALTA", "EMERGENCIAL"])
 
     with st.form("form_cadastro", clear_on_submit=False):
         st.subheader(f"Dados para {aba_selecionada}")
-        
         col1, col2 = st.columns(2)
         
-        # Campos Comuns
         with col1:
             data_cad = st.date_input("Data *", datetime.now())
             unidade = st.selectbox("Unidade *", OPCOES_UNIDADE)
@@ -96,15 +74,10 @@ def app():
             valor = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
             status = st.selectbox("Status *", OPCOES_STATUS)
             solicitacao = st.text_input("Nº Solicitação (300k - 400k)")
-            pedidos_input = st.text_area("Nº Pedidos (1.1M - 1.3M) - Separe por vírgula para vários")
+            pedidos_input = st.text_area("Nº Pedidos (1.1M - 1.3M) - Separe por vírgula")
 
-        # Campos Específicos ALTA
-        avaliacao = ""
-        if aba_selecionada == "ALTA":
-            avaliacao = st.selectbox("Avaliação", OPCOES_AVALIACAO)
-        
-        # Campos Específicos EMERGENCIAL
-        responsavel, num_ad, nf = "", "", ""
+        avaliacao = st.selectbox("Avaliação", OPCOES_AVALIACAO) if aba_selecionada == "ALTA" else ""
+        responsavel, num_ad, nf = ("", "", "")
         if aba_selecionada == "EMERGENCIAL":
             responsavel = st.text_input("Responsável Coleta/Entrega")
             num_ad = st.text_input("Nº AD")
@@ -113,73 +86,63 @@ def app():
         btn_cadastrar = st.form_submit_button("CONCLUIR CADASTRO")
 
     if btn_cadastrar:
-        # 1. Validação de Campos Obrigatórios
-        if not unidade or not pedidos_input and not solicitacao:
+        if not unidade or (not pedidos_input and not solicitacao):
             st.error("Campos com * são obrigatórios.")
             return
 
-        # 2. Tratamento de Números (Intervalos)
         lista_pedidos = [p.strip() for p in pedidos_input.split(",") if p.strip()]
         
-        # Validação de Intervalos (Item 3)
+        # Validação de Intervalos
         if solicitacao:
-            s_int = int(solicitacao)
-            if not (300000 <= s_int <= 400000):
-                st.error("Número de Solicitação fora do intervalo (300.000 - 400.000)")
+            if not (300000 <= int(solicitacao) <= 400000):
+                st.error("Número de Solicitação fora do intervalo (300k-400k)")
                 return
 
         for p in lista_pedidos:
-            p_int = int(p)
-            if not (1100000 <= p_int <= 1300000):
-                st.error(f"Pedido {p} fora do intervalo (1.100.000 - 1.300.000)")
+            if not (1100000 <= int(p) <= 1300000):
+                st.error(f"Pedido {p} fora do intervalo (1.1M-1.3M)")
                 return
 
-        # 3. Lógica de Status (Item 2)
-        if solicitacao and lista_pedidos:
-            if status in ["NÃO APROVADA", "APROVADA"]:
-                st.error(f"Apenas solicitações podem ser {status}. Verifique o cadastro!")
-                return
-            
-            if status == "PEDIDO":
-                delete_row_by_request(client, solicitacao)
-                st.info(f"Solicitação {solicitacao} removida para inclusão dos pedidos.")
+        # Regra de Negócio: Solicitação vira Pedido
+        if solicitacao and lista_pedidos and status == "PEDIDO":
+            delete_row_by_request(client, solicitacao)
 
-        # 4. Verificação de Duplicatas e Cadastro
         ws_destino = sh.worksheet(aba_selecionada)
         
-        # Garantir que não há filtros ativos (Item 5)
+        # Limpar filtros para evitar erro de inserção (Item 5)
         try:
             ws_destino.clear_basic_filter()
         except:
             pass
 
-        data_formatada = data_cad.strftime("%d.%m.%Y")
-        
-        # Se for COTAÇÃO ou PEDIDO com lista, iteramos os pedidos
+        data_formatada = data_cad.strftime("%d/%m/%Y")
         itens_para_cadastrar = lista_pedidos if lista_pedidos else [solicitacao]
         
         sucesso_count = 0
         for item in itens_para_cadastrar:
+            # Verifica duplicata em ambas as abas (Item 3)
             aba_duplicada, linha_duplicada = find_number_in_sheets(client, item)
-            
             if aba_duplicada:
-                st.warning(f"O número {item} já existe na aba {aba_duplicada}, linha {linha_duplicada}. Ignorado.")
+                st.warning(f"O número {item} já existe na aba {aba_duplicada}, linha {linha_duplicada}. Cadastro negado.")
                 continue
             
-            # Montagem da linha conforme estrutura (Item 1)
+            # Montagem da linha conforme a estrutura real das imagens
             if aba_selecionada == "ALTA":
-                # Colunas: B:DIAS(formula), C:DATA, D:UNIDADE, E:CARRO, F:PEDIDO, G:VALOR, H:FORNECEDOR, I:STATUS, J:AVALIAÇÃO...
-                nova_linha = ["", "", data_formatada, unidade, carro, item, valor, fornecedor, status, avaliacao]
+                # Col A: Vazia | Col B: Fórmula DIAS | Col C: DATA | Col D: UNIDADE...
+                # A fórmula abaixo calcula a diferença entre hoje e a data na coluna C
+                formula_dias = f'=IF(C2="";"";TODAY()-C{ws_destino.row_count + 1})' 
+                nova_linha = ["", formula_dias, data_formatada, unidade, carro, item, valor, fornecedor, status, avaliacao]
             else:
                 # EMERGENCIAL: A:UNIDADE, B:DATA, C:CARRO, D:PEDIDO, E:VALOR, F:FORNECEDOR, G:RESP, H:AD, I:STATUS, J:NF
-                data_hora = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-                nova_linha = [unidade, data_hora, carro, item, valor, fornecedor, responsavel, num_ad, status, nf]
+                data_hora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                nova_linha = [unidade, data_hora, carro, item, valor, fornecedor, responsavel, num_ad, data_formatada, status, nf]
 
-            ws_destino.append_row(nova_linha, table_range="A2")
+            # O segredo para cadastrar no final e manter formatação/fórmulas:
+            ws_destino.append_row(nova_linha, value_input_option='USER_ENTERED')
             sucesso_count += 1
 
         if sucesso_count > 0:
-            st.success(f"Cadastro de {sucesso_count} item(ns) realizado com sucesso no pé da planilha!")
+            st.success(f"Sucesso! {sucesso_count} item(ns) cadastrados no pé da planilha.")
             st.balloons()
 
 if __name__ == "__main__":
