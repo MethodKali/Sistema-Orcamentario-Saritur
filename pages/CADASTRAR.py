@@ -2,6 +2,7 @@ import streamlit as st
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
+import re  # Para a limpeza de caracteres
 
 # --- CONFIGURAÇÕES ---
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -19,14 +20,30 @@ def get_gspread_client():
         st.error(f"Erro de autenticação: {e}")
         return None
 
+def limpar_apenas_numeros(texto):
+    """Remove qualquer caractere que não seja número (Lógica BACKUP.py)"""
+    return re.sub(r'\D', '', str(texto))
+
 def get_actual_next_row(ws, col_index):
-    """Encontra a primeira linha com a coluna 'Pedido' vazia dentro da tabela"""
+    """Encontra a primeira linha com a coluna 'Pedido' vazia"""
     col_values = ws.col_values(col_index)
-    # Ignora os cabeçalhos (linhas 1 e 2)
     for i, value in enumerate(col_values[2:], start=3):
         if not value.strip():
             return i
     return len(col_values) + 1
+
+def buscar_duplicado_global(sh, numero):
+    """Verifica se o número existe na coluna de Pedido das abas ALTA ou EMERGENCIAL"""
+    abas = {
+        "ALTA": 5,        # Coluna E
+        "EMERGENCIAL": 4  # Coluna D
+    }
+    for nome_aba, col_idx in abas.items():
+        ws = sh.worksheet(nome_aba)
+        col_values = ws.col_values(col_idx)
+        if str(numero) in col_values:
+            return nome_aba
+    return None
 
 def app():
     st.title("📝 Cadastro de Pedidos e Solicitações")
@@ -47,10 +64,12 @@ def app():
         with col2:
             valor = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
             status = st.selectbox("Status *", ["NÃO APROVADA", "APROVADA", "COTAÇÃO", "PEDIDO"])
-            solicitacao = st.text_input("Nº Solicitação")
-            pedidos_input = st.text_area("Nº Pedidos - Separe por vírgula")
+            solicitacao_raw = st.text_input("Nº Solicitação (Apenas números)")
+            pedidos_raw = st.text_area("Nº Pedidos - Separe por vírgula")
 
         avaliacao = st.selectbox("Avaliação", ["EXPEDIÇÃO", "FINANCEIRO", "UNIDADE", "CREDITO"]) if aba_selecionada == "ALTA" else ""
+        
+        # Campos emergenciais
         responsavel, num_ad, nf = "", "", ""
         if aba_selecionada == "EMERGENCIAL":
             responsavel = st.text_input("Responsável Coleta/Entrega")
@@ -60,26 +79,46 @@ def app():
         btn_cadastrar = st.form_submit_button("CONCLUIR CADASTRO")
 
     if btn_cadastrar:
+        # 1. TRATAMENTO DE DADOS (Lógica BACKUP.py)
+        solicitacao = limpar_apenas_numeros(solicitacao_raw)
+        
+        # Para múltiplos pedidos, limpamos cada um individualmente
+        lista_pedidos_suja = [p.strip() for p in pedidos_raw.split(",") if p.strip()]
+        lista_pedidos = [limpar_apenas_numeros(p) for p in lista_pedidos_suja]
+        
+        # Define quais itens serão validados e cadastrados
+        itens_para_processar = lista_pedidos if lista_pedidos else ([solicitacao] if solicitacao else [])
+
+        if not itens_para_processar:
+            st.error("Por favor, insira ao menos um Nº de Pedido ou Solicitação.")
+            return
+
+        # 2. VERIFICAÇÃO DE DUPLICATAS EM TODAS AS ABAS
+        erros_duplicata = []
+        for item in itens_para_processar:
+            aba_encontrada = buscar_duplicado_global(sh, item)
+            if aba_encontrada:
+                erros_duplicata.append(f"O pedido/solicitação **{item}** já existe na aba **{aba_encontrada}**.")
+
+        if erros_duplicata:
+            for erro in erros_duplicata:
+                st.error(erro)
+            return  # Interrompe o cadastro se houver qualquer duplicata
+
+        # 3. PROCESSO DE CADASTRO (Se não houver erros)
         ws_destino = sh.worksheet(aba_selecionada)
         data_formatada = data_cad.strftime("%d/%m/%Y")
-        itens = [p.strip() for p in pedidos_input.split(",") if p.strip()] or [solicitacao]
-        
-        # REFERÊNCIA DE COLUNA PARA 'PEDIDO':
-        # Na ALTA é E (5). Na EMERGENCIAL é D (4).
         col_ref = 5 if aba_selecionada == "ALTA" else 4
-        
         sucesso_count = 0
-        for item in itens:
+
+        for item in itens_para_processar:
             proxima_linha = get_actual_next_row(ws_destino, col_ref)
             
             if aba_selecionada == "ALTA":
-                # A:DIAS, B:DATA, C:UNIDADE, D:CARRO, E:PEDIDO, F:VALOR, G:FORNECEDOR, H:STATUS, I:AVALIAÇÃO
-                # Note que a fórmula agora aponta para a coluna B (Data)
                 formula_dias = f'=IF(B{proxima_linha}=""; ""; TODAY()-B{proxima_linha})'
                 nova_linha = [formula_dias, data_formatada, unidade, carro, item, valor, fornecedor, status, avaliacao]
                 range_target = f"A{proxima_linha}:I{proxima_linha}"
             else:
-                # EMERGENCIAL: A:UNIDADE, B:DATA, C:CARRO, D:PEDIDO, E:VALOR, F:FORNECEDOR, G:RESP, H:AD, I:VAZIO, J:STATUS
                 data_hora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                 nova_linha = [unidade, data_hora, carro, item, valor, fornecedor, responsavel, num_ad, "", status]
                 range_target = f"A{proxima_linha}:J{proxima_linha}"
@@ -88,7 +127,7 @@ def app():
             sucesso_count += 1
 
         if sucesso_count > 0:
-            st.success(f"Cadastrado com sucesso na linha {proxima_linha}!")
+            st.success(f"Sucesso! {sucesso_count} item(ns) cadastrados na linha {proxima_linha}.")
             st.balloons()
 
 if __name__ == "__main__":
