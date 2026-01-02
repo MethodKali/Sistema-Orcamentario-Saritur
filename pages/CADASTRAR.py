@@ -21,37 +21,34 @@ def get_gspread_client():
         return None
 
 def limpar_apenas_numeros(texto):
-    """Remove letras e símbolos, mantendo apenas números."""
+    """Lógica da BACKUP.py: Mantém apenas dígitos."""
     return re.sub(r'\D', '', str(texto))
 
 def get_actual_next_row(ws, col_index):
-    """Encontra a primeira linha com a coluna 'Pedido' vazia."""
+    """Busca a primeira linha com a célula de Pedido vazia."""
     col_values = ws.col_values(col_index)
     for i, value in enumerate(col_values[2:], start=3):
         if not value.strip():
             return i
     return len(col_values) + 1
 
-def buscar_duplicado_nas_abas(sh, numero_procurado):
+def buscar_duplicado_detalhado(sh, numero_procurado):
     """
-    Busca o número em todas as linhas das colunas de Pedido/Solicitação.
-    Retorna o nome da aba se encontrar, ou None.
+    Verifica em qual aba o número existe.
+    Retorna o nome da aba específica.
     """
-    # Mapeamento: Nome da Aba -> Índice da Coluna (começando em 0)
-    config_abas = {
-        "ALTA": 4,        # Coluna E é índice 4
-        "EMERGENCIAL": 3  # Coluna D é índice 3
+    abas_config = {
+        "ALTA": 4,        # Coluna E (índice 4)
+        "EMERGENCIAL": 3  # Coluna D (índice 3)
     }
     
-    for nome_aba, col_idx in config_abas.items():
+    for nome_aba, col_idx in abas_config.items():
         ws = sh.worksheet(nome_aba)
-        # Pega todos os dados da aba de uma vez (mais rápido e seguro)
-        all_data = ws.get_all_values()
-        
-        for row in all_data[2:]:  # Pula os cabeçalhos
+        # get_all_values garante que pegamos o dado bruto sem erros de formatação
+        data = ws.get_all_values()
+        for row in data[2:]:
             if len(row) > col_idx:
-                valor_celula = limpar_apenas_numeros(row[col_idx])
-                if valor_celula == str(numero_procurado) and valor_celula != "":
+                if limpar_apenas_numeros(row[col_idx]) == str(numero_procurado):
                     return nome_aba
     return None
 
@@ -78,8 +75,6 @@ def app():
             pedidos_raw = st.text_area("Nº Pedidos (Separe por vírgula)")
 
         avaliacao = st.selectbox("Avaliação", ["EXPEDIÇÃO", "FINANCEIRO", "UNIDADE", "CREDITO"]) if aba_selecionada == "ALTA" else ""
-        
-        # Campos emergenciais
         responsavel, num_ad, nf = "", "", ""
         if aba_selecionada == "EMERGENCIAL":
             responsavel = st.text_input("Responsável Coleta/Entrega")
@@ -89,47 +84,54 @@ def app():
         btn_cadastrar = st.form_submit_button("CONCLUIR CADASTRO")
 
     if btn_cadastrar:
-        # 1. TRATAMENTO E LIMPEZA
-        solic_limpa = limpar_apenas_numeros(solicitacao_raw)
-        pedidos_sujos = [p.strip() for p in pedidos_raw.split(",") if p.strip()]
-        pedidos_limpos = [limpar_apenas_numeros(p) for p in pedidos_sujos]
-        
-        # Consolida itens para validar
-        itens_validar = pedidos_limpos if pedidos_limpos else ([solic_limpa] if solic_limpa else [])
+        # 1. LIMPEZA DOS DADOS
+        s_limpa = limpar_apenas_numeros(solicitacao_raw)
+        p_limpos = [limpar_apenas_numeros(x) for x in pedidos_raw.split(",") if x.strip()]
+        itens = p_limpos if p_limpos else ([s_limpa] if s_limpa else [])
 
-        if not itens_validar:
-            st.warning("Insira um número de Pedido ou Solicitação.")
+        if not itens:
+            st.warning("Por favor, preencha o número do Pedido ou Solicitação.")
             return
 
-        # 2. VERIFICAÇÃO DE DUPLICATAS (O CORAÇÃO DO ERRO ANTERIOR)
-        com_erro = False
-        for item in itens_validar:
-            aba_onde_existe = buscar_duplicado_nas_abas(sh, item)
-            if aba_onde_existe:
-                st.error(f"❌ O número **{item}** já está cadastrado na aba **{aba_onde_existe}**!")
-                com_erro = True
-        
-        if com_erro:
-            st.stop() # Interrompe tudo se achar qualquer duplicata
+        # 2. VALIDAÇÃO CRUZADA COM MENSAGENS DISTINTAS
+        encontrados_alta = []
+        encontrados_emergencial = []
 
-        # 3. CADASTRO
+        for item in itens:
+            local = buscar_duplicado_detalhado(sh, item)
+            if local == "ALTA":
+                encontrados_alta.append(item)
+            elif local == "EMERGENCIAL":
+                encontrados_emergencial.append(item)
+
+        # Exibe mensagens de erro separadas
+        if encontrados_alta:
+            st.error(f"⚠️ O(s) seguinte(s) número(s) já existem na aba **ALTA**: {', '.join(encontrados_alta)}")
+        
+        if encontrados_emergencial:
+            st.error(f"🚨 O(s) seguinte(s) número(s) já existem na aba **EMERGENCIAL**: {', '.join(encontrados_emergencial)}")
+
+        # Se houver qualquer erro em qualquer aba, interrompe o processo
+        if encontrados_alta or encontrados_emergencial:
+            st.stop()
+
+        # 3. CADASTRO SE TUDO ESTIVER OK
         ws_destino = sh.worksheet(aba_selecionada)
         data_formatada = data_cad.strftime("%d/%m/%Y")
         col_ref = 5 if aba_selecionada == "ALTA" else 4
         
-        for item in itens_validar:
+        for item in itens:
             proxima_linha = get_actual_next_row(ws_destino, col_ref)
-            
             if aba_selecionada == "ALTA":
                 formula_dias = f'=IF(B{proxima_linha}=""; ""; TODAY()-B{proxima_linha})'
-                nova_linha = [formula_dias, data_formatada, unidade, carro, item, valor, fornecedor, status, avaliacao]
-                ws_destino.update(f"A{proxima_linha}:I{proxima_linha}", [nova_linha], value_input_option='USER_ENTERED')
+                linha = [formula_dias, data_formatada, unidade, carro, item, valor, fornecedor, status, avaliacao]
+                ws_destino.update(f"A{proxima_linha}:I{proxima_linha}", [linha], value_input_option='USER_ENTERED')
             else:
-                data_hora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                nova_linha = [unidade, data_hora, carro, item, valor, fornecedor, responsavel, num_ad, "", status]
-                ws_destino.update(f"A{proxima_linha}:J{proxima_linha}", [nova_linha], value_input_option='USER_ENTERED')
+                d_hora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                linha = [unidade, d_hora, carro, item, valor, fornecedor, responsavel, num_ad, "", status]
+                ws_destino.update(f"A{proxima_linha}:J{proxima_linha}", [linha], value_input_option='USER_ENTERED')
 
-        st.success(f"Cadastro realizado com sucesso!")
+        st.success(f"Cadastro de {len(itens)} item(s) finalizado com sucesso!")
         st.balloons()
 
 if __name__ == "__main__":
