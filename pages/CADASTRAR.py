@@ -21,43 +21,78 @@ def get_gspread_client():
         return None
 
 def limpar_apenas_numeros(texto):
-    """Lógica da BACKUP.py: Mantém apenas dígitos."""
+    """Remove letras e símbolos, mantendo apenas números."""
     return re.sub(r'\D', '', str(texto))
 
 def get_actual_next_row(ws, col_index):
-    """Busca a primeira linha com a célula de Pedido vazia."""
     col_values = ws.col_values(col_index)
     for i, value in enumerate(col_values[2:], start=3):
         if not value.strip():
             return i
     return len(col_values) + 1
 
-def buscar_duplicado_detalhado(sh, numero_procurado):
-    """
-    Verifica em qual aba o número existe.
-    Retorna o nome da aba específica.
-    """
-    abas_config = {
-        "ALTA": 4,        # Coluna E (índice 4)
-        "EMERGENCIAL": 3  # Coluna D (índice 3)
-    }
+# --- FUNÇÕES DE BUSCA E SCANNER ---
+
+def buscar_em_todas_as_abas(sh, itens_validar):
+    """Verifica os itens em ambas as abas e retorna dicionários com os achados."""
+    encontrados_alta = []
+    encontrados_emergencial = []
     
-    for nome_aba, col_idx in abas_config.items():
-        ws = sh.worksheet(nome_aba)
-        # get_all_values garante que pegamos o dado bruto sem erros de formatação
-        data = ws.get_all_values()
-        for row in data[2:]:
-            if len(row) > col_idx:
-                if limpar_apenas_numeros(row[col_idx]) == str(numero_procurado):
-                    return nome_aba
-    return None
+    # Cache dos dados para performance
+    dados_alta = sh.worksheet("ALTA").get_all_values()
+    dados_emerg = sh.worksheet("EMERGENCIAL").get_all_values()
+    
+    for item in itens_validar:
+        num_limpo = str(item)
+        if not num_limpo: continue
+        
+        # Busca na ALTA (Coluna E = índice 4)
+        for row in dados_alta[2:]:
+            if len(row) > 4 and limpar_apenas_numeros(row[4]) == num_limpo:
+                encontrados_alta.append(num_limpo)
+                break # Para de procurar este item na aba atual
+        
+        # Busca na EMERGENCIAL (Coluna D = índice 3)
+        for row in dados_emerg[2:]:
+            if len(row) > 3 and limpar_apenas_numeros(row[3]) == num_limpo:
+                encontrados_emergencial.append(num_limpo)
+                break
+                
+    return list(set(encontrados_alta)), list(set(encontrados_emergencial))
+
+def scanner_duplicatas_globais(sh):
+    """Cruza a aba ALTA com a EMERGENCIAL em busca de números repetidos."""
+    # Coluna E da ALTA (índice 4)
+    pedidos_alta = [limpar_apenas_numeros(row[4]) for row in sh.worksheet("ALTA").get_all_values()[2:] if len(row) > 4]
+    # Coluna D da EMERGENCIAL (índice 3)
+    pedidos_emerg = [limpar_apenas_numeros(row[3]) for row in sh.worksheet("EMERGENCIAL").get_all_values()[2:] if len(row) > 3]
+    
+    # Remove vazios
+    pedidos_alta = set([p for p in pedidos_alta if p])
+    pedidos_emerg = set([p for p in pedidos_emerg if p])
+    
+    # Interseção: números que estão em ambas
+    duplicatas = pedidos_alta.intersection(pedidos_emerg)
+    return sorted(list(duplicatas))
 
 def app():
     st.title("📝 Cadastro de Pedidos e Solicitações")
     client = get_gspread_client()
     if not client: return
     sh = client.open_by_key(SPREADSHEET_ID)
+
+    # --- SIDEBAR: SCANNER DE DUPLICATAS ---
+    st.sidebar.title("🔍 Scanner de Duplicatas")
+    duplicas_globais = scanner_duplicatas_globais(sh)
     
+    if duplicas_globais:
+        st.sidebar.warning("Existem duplicatas de pedidos/solicitações na aba ALTA e EMERGENCIAL!")
+        if st.sidebar.button("Mostrar"):
+            st.sidebar.write(duplicas_globais)
+    else:
+        st.sidebar.success("A planilha não possui dados duplicados")
+
+    # --- FORMULÁRIO PRINCIPAL ---
     aba_selecionada = st.selectbox("Selecione a Aba de Destino", ["ALTA", "EMERGENCIAL"])
 
     with st.form("form_cadastro", clear_on_submit=False):
@@ -84,38 +119,29 @@ def app():
         btn_cadastrar = st.form_submit_button("CONCLUIR CADASTRO")
 
     if btn_cadastrar:
-        # 1. LIMPEZA DOS DADOS
+        # Limpeza
         s_limpa = limpar_apenas_numeros(solicitacao_raw)
         p_limpos = [limpar_apenas_numeros(x) for x in pedidos_raw.split(",") if x.strip()]
         itens = p_limpos if p_limpos else ([s_limpa] if s_limpa else [])
 
         if not itens:
-            st.warning("Por favor, preencha o número do Pedido ou Solicitação.")
+            st.warning("Preencha o número do Pedido ou Solicitação.")
             return
 
-        # 2. VALIDAÇÃO CRUZADA COM MENSAGENS DISTINTAS
-        encontrados_alta = []
-        encontrados_emergencial = []
+        # Validação Cruzada (Garante que verifica as duas abas)
+        na_alta, na_emerg = buscar_em_todas_as_abas(sh, itens)
 
-        for item in itens:
-            local = buscar_duplicado_detalhado(sh, item)
-            if local == "ALTA":
-                encontrados_alta.append(item)
-            elif local == "EMERGENCIAL":
-                encontrados_emergencial.append(item)
-
-        # Exibe mensagens de erro separadas
-        if encontrados_alta:
-            st.error(f"⚠️ O(s) seguinte(s) número(s) já existem na aba **ALTA**: {', '.join(encontrados_alta)}")
+        # Mostra mensagens de erro se houver duplicatas
+        if na_alta:
+            st.error(f"⚠️ O(s) seguinte(s) número(s) já existem na aba **ALTA**: {', '.join(na_alta)}")
         
-        if encontrados_emergencial:
-            st.error(f"🚨 O(s) seguinte(s) número(s) já existem na aba **EMERGENCIAL**: {', '.join(encontrados_emergencial)}")
+        if na_emerg:
+            st.error(f"🚨 O(s) seguinte(s) número(s) já existem na aba **EMERGENCIAL**: {', '.join(na_emerg)}")
 
-        # Se houver qualquer erro em qualquer aba, interrompe o processo
-        if encontrados_alta or encontrados_emergencial:
+        if na_alta or na_emerg:
             st.stop()
 
-        # 3. CADASTRO SE TUDO ESTIVER OK
+        # Cadastro
         ws_destino = sh.worksheet(aba_selecionada)
         data_formatada = data_cad.strftime("%d/%m/%Y")
         col_ref = 5 if aba_selecionada == "ALTA" else 4
@@ -131,8 +157,8 @@ def app():
                 linha = [unidade, d_hora, carro, item, valor, fornecedor, responsavel, num_ad, "", status]
                 ws_destino.update(f"A{proxima_linha}:J{proxima_linha}", [linha], value_input_option='USER_ENTERED')
 
-        st.success(f"Cadastro de {len(itens)} item(s) finalizado com sucesso!")
-        st.balloons()
+        st.success("Cadastrado com sucesso!")
+        st.rerun() # Recarrega para atualizar o scanner na sidebar
 
 if __name__ == "__main__":
     app()
