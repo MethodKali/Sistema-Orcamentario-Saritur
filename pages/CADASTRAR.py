@@ -21,7 +21,6 @@ def get_gspread_client():
         return None
 
 def limpar_apenas_numeros(texto):
-    """Remove letras e símbolos, mantendo apenas números."""
     return re.sub(r'\D', '', str(texto))
 
 def get_actual_next_row(ws, col_index):
@@ -34,69 +33,73 @@ def get_actual_next_row(ws, col_index):
 # --- FUNÇÕES DE BUSCA E SCANNER ---
 
 def buscar_em_todas_as_abas(sh, itens_validar):
-    """Verifica os itens em ambas as abas e retorna dicionários com os achados."""
-    encontrados_alta = []
-    encontrados_emergencial = []
-    
-    # Cache dos dados para performance
+    encontrados_alta, encontrados_emergencial = [], []
     dados_alta = sh.worksheet("ALTA").get_all_values()
     dados_emerg = sh.worksheet("EMERGENCIAL").get_all_values()
     
     for item in itens_validar:
-        num_limpo = str(item)
-        if not num_limpo: continue
-        
-        # Busca na ALTA (Coluna E = índice 4)
+        num = str(item)
+        if not num: continue
         for row in dados_alta[2:]:
-            if len(row) > 4 and limpar_apenas_numeros(row[4]) == num_limpo:
-                encontrados_alta.append(num_limpo)
-                break # Para de procurar este item na aba atual
-        
-        # Busca na EMERGENCIAL (Coluna D = índice 3)
-        for row in dados_emerg[2:]:
-            if len(row) > 3 and limpar_apenas_numeros(row[3]) == num_limpo:
-                encontrados_emergencial.append(num_limpo)
+            if len(row) > 4 and limpar_apenas_numeros(row[4]) == num:
+                encontrados_alta.append(num)
                 break
-                
+        for row in dados_emerg[2:]:
+            if len(row) > 3 and limpar_apenas_numeros(row[3]) == num:
+                encontrados_emergencial.append(num)
+                break
     return list(set(encontrados_alta)), list(set(encontrados_emergencial))
 
-def scanner_duplicatas_globais(sh):
-    """Cruza a aba ALTA com a EMERGENCIAL em busca de números repetidos."""
-    # Coluna E da ALTA (índice 4)
-    pedidos_alta = [limpar_apenas_numeros(row[4]) for row in sh.worksheet("ALTA").get_all_values()[2:] if len(row) > 4]
-    # Coluna D da EMERGENCIAL (índice 3)
-    pedidos_emerg = [limpar_apenas_numeros(row[3]) for row in sh.worksheet("EMERGENCIAL").get_all_values()[2:] if len(row) > 3]
+def excluir_por_numero(sh, aba_nome, numeros_excluir):
+    ws = sh.worksheet(aba_nome)
+    col_idx = 5 if aba_nome == "ALTA" else 4 # Coluna E ou D
     
-    # Remove vazios
+    # Pegamos os valores da coluna específica
+    col_values = ws.col_values(col_idx)
+    linhas_para_deletar = []
+    
+    # Identifica as linhas (de baixo para cima para não perder o índice ao deletar)
+    for i, valor in enumerate(col_values):
+        valor_limpo = limpar_apenas_numeros(valor)
+        if valor_limpo in numeros_excluir:
+            linhas_para_deletar.append(i + 1)
+    
+    if linhas_para_deletar:
+        for linha in sorted(linhas_para_deletar, reverse=True):
+            ws.delete_rows(linha)
+        return len(linhas_para_deletar)
+    return 0
+
+def scanner_duplicatas_globais(sh):
+    pedidos_alta = [limpar_apenas_numeros(row[4]) for row in sh.worksheet("ALTA").get_all_values()[2:] if len(row) > 4]
+    pedidos_emerg = [limpar_apenas_numeros(row[3]) for row in sh.worksheet("EMERGENCIAL").get_all_values()[2:] if len(row) > 3]
     pedidos_alta = set([p for p in pedidos_alta if p])
     pedidos_emerg = set([p for p in pedidos_emerg if p])
-    
-    # Interseção: números que estão em ambas
-    duplicatas = pedidos_alta.intersection(pedidos_emerg)
-    return sorted(list(duplicatas))
+    return sorted(list(pedidos_alta.intersection(pedidos_emerg)))
 
 def app():
-    st.title("📝 Cadastro de Pedidos e Solicitações")
+    st.title("📝 Gestão de Pedidos e Solicitações")
     client = get_gspread_client()
     if not client: return
     sh = client.open_by_key(SPREADSHEET_ID)
 
-    # --- SIDEBAR: SCANNER DE DUPLICATAS ---
+    # --- SIDEBAR: SCANNER VISUAL ---
     st.sidebar.title("🔍 Scanner de Duplicatas")
     duplicas_globais = scanner_duplicatas_globais(sh)
     
     if duplicas_globais:
         st.sidebar.warning("Existem duplicatas de pedidos/solicitações na aba ALTA e EMERGENCIAL!")
-        if st.sidebar.button("Mostrar"):
-            st.sidebar.write(duplicas_globais)
+        if st.sidebar.button("Mostrar Lista"):
+            for num in duplicas_globais:
+                st.sidebar.code(num) # Mostra um abaixo do outro com estilo scannable
     else:
         st.sidebar.success("A planilha não possui dados duplicados")
 
-    # --- FORMULÁRIO PRINCIPAL ---
-    aba_selecionada = st.selectbox("Selecione a Aba de Destino", ["ALTA", "EMERGENCIAL"])
+    # --- ABA DE CADASTRO ---
+    st.subheader("Cadastrar Novo Registro")
+    aba_dest = st.selectbox("Selecione a Aba de Destino", ["ALTA", "EMERGENCIAL"])
 
-    with st.form("form_cadastro", clear_on_submit=False):
-        st.subheader(f"Dados para {aba_selecionada}")
+    with st.form("form_cadastro"):
         col1, col2 = st.columns(2)
         with col1:
             data_cad = st.date_input("Data *", datetime.now())
@@ -105,60 +108,75 @@ def app():
             fornecedor = st.text_input("Fornecedor")
         with col2:
             valor = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
-            status = st.selectbox("Status *", ["NÃO APROVADA", "APROVADA", "COTAÇÃO", "PEDIDO"])
+            status = st.selectbox("Status *", ["COTAÇÃO", "PEDIDO", "APROVADA", "NÃO APROVADA"])
             solicitacao_raw = st.text_input("Nº Solicitação")
             pedidos_raw = st.text_area("Nº Pedidos (Separe por vírgula)")
 
-        avaliacao = st.selectbox("Avaliação", ["EXPEDIÇÃO", "FINANCEIRO", "UNIDADE", "CREDITO"]) if aba_selecionada == "ALTA" else ""
-        responsavel, num_ad, nf = "", "", ""
-        if aba_selecionada == "EMERGENCIAL":
+        avaliacao = st.selectbox("Avaliação", ["EXPEDIÇÃO", "FINANCEIRO", "UNIDADE", "CREDITO"]) if aba_dest == "ALTA" else ""
+        responsavel, num_ad = ("", "")
+        if aba_dest == "EMERGENCIAL":
             responsavel = st.text_input("Responsável Coleta/Entrega")
             num_ad = st.text_input("Nº AD")
-            nf = st.text_input("NF")
 
         btn_cadastrar = st.form_submit_button("CONCLUIR CADASTRO")
 
     if btn_cadastrar:
-        # Limpeza
         s_limpa = limpar_apenas_numeros(solicitacao_raw)
         p_limpos = [limpar_apenas_numeros(x) for x in pedidos_raw.split(",") if x.strip()]
         itens = p_limpos if p_limpos else ([s_limpa] if s_limpa else [])
 
         if not itens:
             st.warning("Preencha o número do Pedido ou Solicitação.")
-            return
+        else:
+            # Lógica Status PEDIDO: Excluir solicitação anterior se existir
+            if status == "PEDIDO" and s_limpa:
+                # Busca em ambas as abas e deleta antes de cadastrar o novo
+                excluir_por_numero(sh, "ALTA", [s_limpa])
+                excluir_por_numero(sh, "EMERGENCIAL", [s_limpa])
 
-        # Validação Cruzada (Garante que verifica as duas abas)
-        na_alta, na_emerg = buscar_em_todas_as_abas(sh, itens)
+            # Validação de Duplicatas (apenas impede se não for o fluxo de conversão COTAÇÃO -> PEDIDO)
+            na_alta, na_emerg = buscar_em_todas_as_abas(sh, itens)
+            if na_alta: st.error(f"⚠️ Já existe na aba **ALTA**: {', '.join(na_alta)}")
+            if na_emerg: st.error(f"🚨 Já existe na aba **EMERGENCIAL**: {', '.join(na_emerg)}")
+            
+            if not na_alta and not na_emerg:
+                ws = sh.worksheet(aba_dest)
+                dt_f = data_cad.strftime("%d/%m/%Y")
+                col_ref = 5 if aba_dest == "ALTA" else 4
+                for item in itens:
+                    prox = get_actual_next_row(ws, col_ref)
+                    if aba_dest == "ALTA":
+                        formula = f'=IF(B{prox}=""; ""; TODAY()-B{prox})'
+                        linha = [formula, dt_f, unidade, carro, item, valor, fornecedor, status, avaliacao]
+                        ws.update(f"A{prox}:I{prox}", [linha], value_input_option='USER_ENTERED')
+                    else:
+                        d_h = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                        linha = [unidade, d_h, carro, item, valor, fornecedor, responsavel, num_ad, "", status]
+                        ws.update(f"A{prox}:J{prox}", [linha], value_input_option='USER_ENTERED')
+                st.success("Cadastro realizado!")
+                st.rerun()
 
-        # Mostra mensagens de erro se houver duplicatas
-        if na_alta:
-            st.error(f"⚠️ O(s) seguinte(s) número(s) já existem na aba **ALTA**: {', '.join(na_alta)}")
-        
-        if na_emerg:
-            st.error(f"🚨 O(s) seguinte(s) número(s) já existem na aba **EMERGENCIAL**: {', '.join(na_emerg)}")
+    st.markdown("---")
 
-        if na_alta or na_emerg:
-            st.stop()
-
-        # Cadastro
-        ws_destino = sh.worksheet(aba_selecionada)
-        data_formatada = data_cad.strftime("%d/%m/%Y")
-        col_ref = 5 if aba_selecionada == "ALTA" else 4
-        
-        for item in itens:
-            proxima_linha = get_actual_next_row(ws_destino, col_ref)
-            if aba_selecionada == "ALTA":
-                formula_dias = f'=IF(B{proxima_linha}=""; ""; TODAY()-B{proxima_linha})'
-                linha = [formula_dias, data_formatada, unidade, carro, item, valor, fornecedor, status, avaliacao]
-                ws_destino.update(f"A{proxima_linha}:I{proxima_linha}", [linha], value_input_option='USER_ENTERED')
+    # --- NOVO MÓDULO: EXCLUSÃO DE REGISTROS ---
+    st.subheader("🗑️ Excluir Registros")
+    col_ex1, col_ex2 = st.columns(2)
+    with col_ex1:
+        aba_excluir = st.selectbox("De qual aba deseja excluir?", ["ALTA", "EMERGENCIAL"])
+    with col_ex2:
+        numeros_ex_raw = st.text_area("Nº Solicitação/Pedido (Unico ou separados por vírgula)")
+    
+    if st.button("EXCLUIR LINHAS DEFINITIVAMENTE"):
+        if numeros_ex_raw:
+            lista_ex = [limpar_apenas_numeros(x) for x in numeros_ex_raw.split(",") if x.strip()]
+            qtd = excluir_por_numero(sh, aba_excluir, lista_ex)
+            if qtd > 0:
+                st.success(f"Foram excluídas {qtd} linha(s) da aba {aba_excluir}.")
+                st.rerun()
             else:
-                d_hora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                linha = [unidade, d_hora, carro, item, valor, fornecedor, responsavel, num_ad, "", status]
-                ws_destino.update(f"A{proxima_linha}:J{proxima_linha}", [linha], value_input_option='USER_ENTERED')
-
-        st.success("Cadastrado com sucesso!")
-        st.rerun() # Recarrega para atualizar o scanner na sidebar
+                st.warning("Nenhum registro encontrado para exclusão.")
+        else:
+            st.error("Informe ao menos um número para excluir.")
 
 if __name__ == "__main__":
     app()
