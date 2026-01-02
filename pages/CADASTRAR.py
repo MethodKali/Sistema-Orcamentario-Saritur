@@ -1,17 +1,11 @@
 import streamlit as st
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import pandas as pd
 from datetime import datetime
 
-# --- CONFIGURAÇÕES BÁSICAS ---
+# --- CONFIGURAÇÕES ---
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 SPREADSHEET_ID = "1n5I4U7siMsRB-eeAcWr56zNqudlcVbK7T2OImIjnMWs"
-
-# Opções de Unidade, Status e Avaliação permanecem as mesmas...
-OPCOES_UNIDADE = ["INDÚSTRIA", "JARDIM MONTANHÊS", "SÃO MARCOS", "NOVA LIMA", "ITAÚNA", "LAGOA SANTA", "DURVAL DE BARROS", "MONTES CLAROS", "VARGINHA", "NEVES", "LAVRAS", "IPATINGA", "VESPASIANO", "GARANTIA", "VENDA DE VEÍCULOS", "ADMINISTRATIVO", "PREDIO ADM", "EXPEDIÇÃO", "CEL. FABRICIANO", "OLIVEIRA", "MORRO ALTO", "TRANSNORTE", "TIMOTEO", "ADMINISTRAÇÃO"]
-OPCOES_STATUS = ["NÃO APROVADA", "APROVADA", "COTAÇÃO", "PEDIDO"]
-OPCOES_AVALIACAO = ["EXPEDIÇÃO", "FINANCEIRO", "UNIDADE", "CREDITO"]
 
 def get_gspread_client():
     try:
@@ -26,24 +20,16 @@ def get_gspread_client():
         return None
 
 def get_actual_next_row(ws, col_index):
-    """
-    Encontra a primeira linha realmente disponível ignorando fórmulas e bordas.
-    Busca o primeiro espaço vazio na coluna de referência (Pedido).
-    """
+    """Encontra a primeira linha com a coluna 'Pedido' vazia dentro da tabela"""
     col_values = ws.col_values(col_index)
-    # Remove o cabeçalho (linhas 1 e 2)
-    data_values = col_values[2:] if len(col_values) > 2 else []
-    
-    for i, value in enumerate(data_values):
-        if not value.strip(): # Se encontrar uma célula vazia no meio da tabela
-            return i + 3
-            
+    # Ignora os cabeçalhos (linhas 1 e 2)
+    for i, value in enumerate(col_values[2:], start=3):
+        if not value.strip():
+            return i
     return len(col_values) + 1
 
 def app():
     st.title("📝 Cadastro de Pedidos e Solicitações")
-    
-    # DICA: Se ver erros de "TypeError", limpe o cache do navegador (Ctrl+F5)
     client = get_gspread_client()
     if not client: return
     sh = client.open_by_key(SPREADSHEET_ID)
@@ -55,16 +41,16 @@ def app():
         col1, col2 = st.columns(2)
         with col1:
             data_cad = st.date_input("Data *", datetime.now())
-            unidade = st.selectbox("Unidade *", OPCOES_UNIDADE)
+            unidade = st.selectbox("Unidade *", ["INDÚSTRIA", "JARDIM MONTANHÊS", "SÃO MARCOS", "NOVA LIMA", "ITAÚNA", "LAGOA SANTA", "DURVAL DE BARROS", "MONTES CLAROS", "VARGINHA", "NEVES", "LAVRAS", "IPATINGA", "VESPASIANO", "GARANTIA", "VENDA DE VEÍCULOS", "ADMINISTRATIVO", "PREDIO ADM", "EXPEDIÇÃO", "CEL. FABRICIANO", "OLIVEIRA", "MORRO ALTO", "TRANSNORTE", "TIMOTEO", "ADMINISTRAÇÃO"])
             carro = st.text_input("Carro | Utilização")
             fornecedor = st.text_input("Fornecedor")
         with col2:
             valor = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
-            status = st.selectbox("Status *", OPCOES_STATUS)
+            status = st.selectbox("Status *", ["NÃO APROVADA", "APROVADA", "COTAÇÃO", "PEDIDO"])
             solicitacao = st.text_input("Nº Solicitação")
             pedidos_input = st.text_area("Nº Pedidos - Separe por vírgula")
 
-        avaliacao = st.selectbox("Avaliação", OPCOES_AVALIACAO) if aba_selecionada == "ALTA" else ""
+        avaliacao = st.selectbox("Avaliação", ["EXPEDIÇÃO", "FINANCEIRO", "UNIDADE", "CREDITO"]) if aba_selecionada == "ALTA" else ""
         responsavel, num_ad, nf = "", "", ""
         if aba_selecionada == "EMERGENCIAL":
             responsavel = st.text_input("Responsável Coleta/Entrega")
@@ -76,36 +62,33 @@ def app():
     if btn_cadastrar:
         ws_destino = sh.worksheet(aba_selecionada)
         data_formatada = data_cad.strftime("%d/%m/%Y")
-        itens_para_cadastrar = [p.strip() for p in pedidos_input.split(",") if p.strip()] or [solicitacao]
+        itens = [p.strip() for p in pedidos_input.split(",") if p.strip()] or [solicitacao]
         
-        # COLUNA DE REFERÊNCIA: F (6) na ALTA, D (4) na EMERGENCIAL
-        col_ref = 6 if aba_selecionada == "ALTA" else 4
+        # REFERÊNCIA DE COLUNA PARA 'PEDIDO':
+        # Na ALTA é E (5). Na EMERGENCIAL é D (4).
+        col_ref = 5 if aba_selecionada == "ALTA" else 4
         
         sucesso_count = 0
-        for item in itens_para_cadastrar:
-            # 1. ENCONTRAR A LINHA EXATA
+        for item in itens:
             proxima_linha = get_actual_next_row(ws_destino, col_ref)
             
-            # 2. MONTAR A LINHA PARA ENCAIXAR NAS BORDAS
             if aba_selecionada == "ALTA":
-                # Alinhamento conforme imagem 23-17-24:
-                # B:DIAS, C:DATA, D:UNIDADE, E:CARRO, F:PEDIDO, G:VALOR, H:FORNECEDOR, I:STATUS, J:AVALIAÇÃO
-                formula_dias = f'=IF(C{proxima_linha}="";"";TODAY()-C{proxima_linha})'
+                # A:DIAS, B:DATA, C:UNIDADE, D:CARRO, E:PEDIDO, F:VALOR, G:FORNECEDOR, H:STATUS, I:AVALIAÇÃO
+                # Note que a fórmula agora aponta para a coluna B (Data)
+                formula_dias = f'=IF(B{proxima_linha}=""; ""; TODAY()-B{proxima_linha})'
                 nova_linha = [formula_dias, data_formatada, unidade, carro, item, valor, fornecedor, status, avaliacao]
-                # Inicia na Coluna B (2) até J (10)
-                range_target = f"B{proxima_linha}:J{proxima_linha}"
+                range_target = f"A{proxima_linha}:I{proxima_linha}"
             else:
-                # EMERGENCIAL: A:UNIDADE, B:DATA, C:CARRO, D:PEDIDO, E:VALOR, F:FORNECEDOR, G:RESP, H:AD, I:DATA_PGTO, J:STATUS
+                # EMERGENCIAL: A:UNIDADE, B:DATA, C:CARRO, D:PEDIDO, E:VALOR, F:FORNECEDOR, G:RESP, H:AD, I:VAZIO, J:STATUS
                 data_hora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                 nova_linha = [unidade, data_hora, carro, item, valor, fornecedor, responsavel, num_ad, "", status]
                 range_target = f"A{proxima_linha}:J{proxima_linha}"
 
-            # 3. ATUALIZAR EM VEZ DE ADICIONAR NOVA LINHA
             ws_destino.update(range_target, [nova_linha], value_input_option='USER_ENTERED')
             sucesso_count += 1
 
         if sucesso_count > 0:
-            st.success(f"Cadastrado na linha {proxima_linha} com sucesso!")
+            st.success(f"Cadastrado com sucesso na linha {proxima_linha}!")
             st.balloons()
 
 if __name__ == "__main__":
