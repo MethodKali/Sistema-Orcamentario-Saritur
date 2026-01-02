@@ -6,7 +6,7 @@ import re
 
 # --- CONFIGURAÇÕES ---
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-SPREADSHEET_ID = "1n5I4U7siMsRB-eeAcWr56zNqudlcVbK7T2OImIjnMWs"
+SPREADSHEET_ID = "1X9trwwqVCwPXY2_O667WJcOR4CHNYbBjJDVsrYNZSgc"
 
 def get_gspread_client():
     try:
@@ -27,11 +27,16 @@ def extrair_numeros_da_string(texto):
 def limpar_apenas_numeros(texto):
     return re.sub(r'\D', '', str(texto))
 
-# --- FUNÇÃO DO SCANNER ---
+def get_actual_next_row(ws):
+    """Retorna o número da próxima linha física vazia na planilha"""
+    return len(ws.col_values(3)) + 1 # Baseado na coluna C (Data) que sempre terá valor
+
 def scanner_duplicatas_globais(sh):
     dados_alta = sh.worksheet("ALTA").get_all_values()[2:]
     dados_emerg = sh.worksheet("EMERGENCIAL").get_all_values()[2:]
-    pedidos_alta = [limpar_apenas_numeros(r[4]) for r in dados_alta if len(r) > 4 and limpar_apenas_numeros(r[4])]
+    # Na ALTA o número agora está na Coluna F (índice 5)
+    pedidos_alta = [limpar_apenas_numeros(r[5]) for r in dados_alta if len(r) > 5 and limpar_apenas_numeros(r[5])]
+    # Na EMERGENCIAL o número continua na Coluna D (índice 3)
     pedidos_emerg = [limpar_apenas_numeros(r[3]) for r in dados_emerg if len(r) > 3 and limpar_apenas_numeros(r[3])]
     return sorted(list(set(pedidos_alta).intersection(set(pedidos_emerg))))
 
@@ -41,7 +46,7 @@ def buscar_em_todas_as_abas_detalhado(sh, lista_numeros):
     dados_emerg = sh.worksheet("EMERGENCIAL").get_all_values()
     for num in lista_numeros:
         for row in dados_alta[2:]:
-            if len(row) > 4 and limpar_apenas_numeros(row[4]) == num:
+            if len(row) > 5 and limpar_apenas_numeros(row[5]) == num:
                 mapa_encontrados[num] = "ALTA"
                 break
         if num not in mapa_encontrados:
@@ -53,7 +58,7 @@ def buscar_em_todas_as_abas_detalhado(sh, lista_numeros):
 
 def excluir_por_numero(sh, aba_nome, lista_numeros):
     ws = sh.worksheet(aba_nome)
-    col_idx = 5 if aba_nome == "ALTA" else 4
+    col_idx = 6 if aba_nome == "ALTA" else 4 # Coluna F na ALTA, Coluna D na EMERGENCIAL
     col_values = ws.col_values(col_idx)
     linhas_para_deletar = []
     for i, valor in enumerate(col_values):
@@ -70,7 +75,7 @@ client = get_gspread_client()
 if not client: st.stop()
 sh = client.open_by_key(SPREADSHEET_ID)
 
-# SIDEBAR COM SCANNER
+# SIDEBAR
 st.sidebar.title("🔍 Scanner de Duplicatas")
 duplicas_globais = scanner_duplicatas_globais(sh)
 if duplicas_globais:
@@ -82,7 +87,6 @@ else:
 
 st.title("📝 Gestão de Pedidos e Solicitações")
 
-# Exibição de mensagens do session_state
 if "mensagem_sucesso" in st.session_state:
     st.success(st.session_state.mensagem_sucesso)
     del st.session_state.mensagem_sucesso
@@ -90,7 +94,6 @@ if "alertas_erro" in st.session_state:
     for msg in st.session_state.alertas_erro: st.error(msg)
     del st.session_state.alertas_erro
 
-# FORMULÁRIO
 aba_dest = st.selectbox("Selecione a Aba de Destino", ["ALTA", "EMERGENCIAL"])
 
 with st.form("form_cadastro", clear_on_submit=True):
@@ -113,18 +116,15 @@ with st.form("form_cadastro", clear_on_submit=True):
 if btn_cadastrar:
     s_nums = extrair_numeros_da_string(solicitacao_raw)
     p_nums = extrair_numeros_da_string(pedidos_raw)
-    
     st.session_state.alertas_erro = []
     
-    # 1. EXCLUSÃO (Sempre tenta excluir as solicitações informadas na aba destino para limpar)
+    # 1. EXCLUSÃO PRÉVIA
     msg_exc = ""
     if s_nums:
         qtd_rem = excluir_por_numero(sh, "ALTA", s_nums) + excluir_por_numero(sh, "EMERGENCIAL", s_nums)
-        if qtd_rem > 0: msg_exc = f" ({qtd_rem} cotação(ões) antiga(s) removida(s))"
+        if qtd_rem > 0: msg_exc = f" ({qtd_rem} antigo(s) removido(s))"
 
-    # 2. DEFINIR O QUE SERÁ CADASTRADO
-    # Se status for PEDIDO, cadastramos APENAS o que estiver no campo Pedidos.
-    # Se for outro status, cadastramos Solicitação + Pedidos.
+    # 2. ITENS PARA CADASTRAR
     if aba_dest == "ALTA" and status_selecionado == "PEDIDO":
         itens_para_validar = p_nums
     else:
@@ -134,36 +134,35 @@ if btn_cadastrar:
         if s_nums and status_selecionado == "PEDIDO":
             st.session_state.mensagem_sucesso = f"✅ Limpeza concluída!{msg_exc}"
             st.rerun()
-        st.warning("Nenhum número detectado para cadastro.")
         st.stop()
 
-    # 3. VALIDAÇÃO DE DUPLICATAS (Somente para o que será cadastrado)
+    # 3. VALIDAÇÃO
     mapa_geral = buscar_em_todas_as_abas_detalhado(sh, itens_para_validar)
-    itens_finais = []
+    itens_finais = [i for i in itens_para_validar if i not in mapa_geral]
     for item in itens_para_validar:
-        if item in mapa_geral:
-            st.session_state.alertas_erro.append(f"❌ Item {item} ignorado: já existe na aba {mapa_geral[item]}.")
-        else:
-            itens_finais.append(item)
+        if item in mapa_geral: st.session_state.alertas_erro.append(f"❌ Item {item} já existe na aba {mapa_geral[item]}.")
 
-    # 4. APPEND DOS DADOS
+    # 4. APPEND COM FÓRMULA DINÂMICA
     if itens_finais:
         ws = sh.worksheet(aba_dest)
+        dt_str = data_cad.strftime("%d/%m/%Y")
+        prox_linha = get_actual_next_row(ws)
         novas_linhas = []
-        dt_f = data_cad.strftime("%d/%m/%Y")
 
-        for item in itens_finais:
+        for i, item in enumerate(itens_finais):
+            linha_atual = prox_linha + i
             if aba_dest == "ALTA":
-                # Se o item veio do campo de solicitação, usa o status do seletor. 
-                # Se veio do bloco de pedidos, força "PEDIDO".
                 status_item = status_selecionado if item in s_nums else "PEDIDO"
-                novas_linhas.append(["", dt_f, unidade, carro, item, valor, fornecedor, status_item])
+                # FÓRMULA: =IF(C{linha}=""; ""; TODAY()-C{linha}) -> Compara com a Coluna C (Data)
+                formula_dias = f'=IF(C{linha_atual}=""; ""; TODAY()-C{linha_atual})'
+                # Estrutura: A:Vazio | B:Dias | C:Data | D:Unidade | E:Carro | F:Item | G:Valor | H:Fornecedor | I:Status
+                novas_linhas.append(["", formula_dias, dt_str, unidade, carro, item, valor, fornecedor, status_item])
             else:
-                # Emergencial sempre status vazio
+                # EMERGENCIAL: Mantém o layout original
                 novas_linhas.append([unidade, datetime.now().strftime("%d/%m/%Y %H:%M:%S"), carro, item, valor, fornecedor, "", "", "", ""])
 
         ws.append_rows(novas_linhas, value_input_option='USER_ENTERED')
-        st.session_state.mensagem_sucesso = f"✅ {len(novas_linhas)} itens processados.{msg_exc}"
+        st.session_state.mensagem_sucesso = f"✅ {len(novas_linhas)} itens adicionados.{msg_exc}"
     
     st.rerun()
 
@@ -172,7 +171,7 @@ st.markdown("---")
 st.subheader("🗑️ Exclusão Manual")
 with st.expander("Ferramentas"):
     with st.form("form_exclusao", clear_on_submit=True):
-        aba_ex = st.selectbox("Aba", ["ALTA", "EMERGENCIAL"], key="manual_aba")
+        aba_ex = st.selectbox("Aba", ["ALTA", "EMERGENCIAL"], key="man_aba")
         txt_ex = st.text_area("Números para excluir")
         if st.form_submit_button("EXCLUIR"):
             n_ex = extrair_numeros_da_string(txt_ex)
