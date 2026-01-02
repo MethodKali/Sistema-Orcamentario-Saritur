@@ -99,43 +99,47 @@ def app():
             pedidos_raw = st.text_area("Nº Pedidos (Separe por vírgula)")
 
         avaliacao = st.selectbox("Avaliação", ["EXPEDIÇÃO", "FINANCEIRO", "UNIDADE", "CREDITO"]) if aba_dest == "ALTA" else ""
-        responsavel, num_ad = ("", "")
-        if aba_dest == "EMERGENCIAL":
-            responsavel = st.text_input("Responsável Coleta/Entrega")
-            num_ad = st.text_input("Nº AD")
-
         btn_cadastrar = st.form_submit_button("CONCLUIR CADASTRO")
 
     if btn_cadastrar:
         s_limpa = limpar_apenas_numeros(solicitacao_raw)
         p_limpos = [limpar_apenas_numeros(x) for x in pedidos_raw.split(",") if x.strip()]
         
-        # Decide o que cadastrar: Se houver pedidos, eles são a prioridade. Caso contrário, a solicitação.
+        # Decide o que cadastrar (Pedidos tem prioridade sobre Solicitação)
         itens_para_cadastrar = p_limpos if p_limpos else ([s_limpa] if s_limpa else [])
 
         if not itens_para_cadastrar:
             st.warning("Preencha ao menos um número de Solicitação ou Pedido.")
         else:
-            # 1. VERIFICAÇÃO DE DUPLICATAS (Sempre faz para evitar cadastrar o que já existe)
+            # 1. VERIFICAÇÃO DE DUPLICATAS
             na_alta, na_emerg = buscar_em_todas_as_abas(sh, itens_para_cadastrar)
             
-            # Se for PEDIDO, permitimos ignorar a duplicata da Solicitação original (pois vamos excluí-la)
+            # --- LÓGICA ESPECIAL PARA COTAÇÃO ---
+            if status == "COTAÇÃO" and s_limpa:
+                if s_limpa in na_alta or s_limpa in na_emerg:
+                    st.warning(f"ℹ️ A solicitação {s_limpa} já existe na planilha! O cadastro prosseguirá apenas para novos itens.")
+                    # Remove a solicitação da lista de erros para não travar o cadastro
+                    if s_limpa in na_alta: na_alta.remove(s_limpa)
+                    if s_limpa in na_emerg: na_emerg.remove(s_limpa)
+            
+            # Se for PEDIDO, removemos a solicitação da lista de "erros" pois ela será excluída logo abaixo
             if status == "PEDIDO" and s_limpa:
                 if s_limpa in na_alta: na_alta.remove(s_limpa)
                 if s_limpa in na_emerg: na_emerg.remove(s_limpa)
 
+            # Se ainda houver duplicatas (nos Pedidos, por exemplo), aí sim trava com ERRO
             if na_alta or na_emerg:
-                if na_alta: st.error(f"⚠️ Já existe na aba ALTA: {', '.join(na_alta)}")
-                if na_emerg: st.error(f"🚨 Já existe na aba EMERGENCIAL: {', '.join(na_emerg)}")
+                if na_alta: st.error(f"❌ Pedido(s) já existente(s) na ALTA: {', '.join(na_alta)}")
+                if na_emerg: st.error(f"❌ Pedido(s) já existente(s) na EMERGENCIAL: {', '.join(na_emerg)}")
                 st.stop()
 
-            # 2. LÓGICA DE EXCLUSÃO (Somente se status for PEDIDO e houver solicitação para limpar)
+            # 2. LÓGICA DE EXCLUSÃO (Somente status PEDIDO)
             msg_exclusao = ""
             if status == "PEDIDO" and s_limpa:
                 exc_alta = excluir_por_numero(sh, "ALTA", [s_limpa])
                 exc_emerg = excluir_por_numero(sh, "EMERGENCIAL", [s_limpa])
                 if exc_alta or exc_emerg:
-                    msg_exclusao = f" (Solicitação {s_limpa} antiga removida)"
+                    msg_exclusao = f" (Solicitação {s_limpa} removida)"
 
             # 3. EFETUAR CADASTRO
             ws = sh.worksheet(aba_dest)
@@ -150,10 +154,10 @@ def app():
                     ws.update(f"A{prox}:I{prox}", [linha], value_input_option='USER_ENTERED')
                 else:
                     d_h = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                    linha = [unidade, d_h, carro, item, valor, fornecedor, responsavel, num_ad, "", status]
+                    linha = [unidade, d_h, carro, item, valor, fornecedor, "", "", "", status] # Colunas vazias para manter padrão
                     ws.update(f"A{prox}:J{prox}", [linha], value_input_option='USER_ENTERED')
 
-            st.success(f"✅ Sucesso! {len(itens_para_cadastrar)} registro(s) inserido(s) na aba {aba_dest}.{msg_exclusao}")
+            st.success(f"✅ Sucesso! Registro(s) inserido(s) na aba {aba_dest}.{msg_exclusao}")
             st.balloons()
 
     # --- MÓDULO: EXCLUSÃO MANUAL ---
