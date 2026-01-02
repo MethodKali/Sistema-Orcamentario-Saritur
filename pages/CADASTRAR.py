@@ -21,12 +21,10 @@ def get_gspread_client():
         return None
 
 def extrair_numeros_da_string(texto):
-    """Extrai apenas os números. Se não houver números, retorna lista vazia."""
     if not texto: return []
     return re.findall(r'\d+', str(texto))
 
 def limpar_apenas_numeros(texto):
-    """Retorna apenas os dígitos de uma string. Se não houver dígitos, retorna string vazia."""
     return re.sub(r'\D', '', str(texto))
 
 def get_actual_next_row(ws, col_index):
@@ -36,45 +34,29 @@ def get_actual_next_row(ws, col_index):
             return i
     return len(col_values) + 1
 
-# --- FUNÇÃO DO SCANNER CORRIGIDA ---
+# --- FUNÇÕES DE BUSCA (Sempre consultando a planilha na hora) ---
+
 def scanner_duplicatas_globais(sh):
-    """Cruza a aba ALTA com a EMERGENCIAL buscando números duplicados reais."""
-    # Coleta dados da ALTA (Coluna E, índice 4) e limpa mantendo só quem tem número
+    # Forçamos a leitura atualizada das abas
     dados_alta = sh.worksheet("ALTA").get_all_values()[2:]
-    pedidos_alta = []
-    for row in dados_alta:
-        if len(row) > 4:
-            num = limpar_apenas_numeros(row[4])
-            if num: # Só adiciona se não for vazio
-                pedidos_alta.append(num)
-    
-    # Coleta dados da EMERGENCIAL (Coluna D, índice 3) e limpa
     dados_emerg = sh.worksheet("EMERGENCIAL").get_all_values()[2:]
-    pedidos_emerg = []
-    for row in dados_emerg:
-        if len(row) > 3:
-            num = limpar_apenas_numeros(row[3])
-            if num: # Só adiciona se não for vazio
-                pedidos_emerg.append(num)
     
-    # Transforma em conjuntos para encontrar a interseção (duplicados)
-    set_alta = set(pedidos_alta)
-    set_emerg = set(pedidos_emerg)
+    pedidos_alta = [limpar_apenas_numeros(r[4]) for r in dados_alta if len(r) > 4 and limpar_apenas_numeros(r[4])]
+    pedidos_emerg = [limpar_apenas_numeros(r[3]) for r in dados_emerg if len(r) > 3 and limpar_apenas_numeros(r[3])]
     
-    return sorted(list(set_alta.intersection(set_emerg)))
+    return sorted(list(set(pedidos_alta).intersection(set(pedidos_emerg))))
 
 def buscar_em_todas_as_abas_detalhado(sh, lista_numeros):
     mapa_encontrados = {}
+    # Recarrega os dados para garantir que exclusões recentes sejam computadas
     dados_alta = sh.worksheet("ALTA").get_all_values()
     dados_emerg = sh.worksheet("EMERGENCIAL").get_all_values()
     
     for num in lista_numeros:
-        # Procurar na ALTA
         for row in dados_alta[2:]:
             if len(row) > 4 and limpar_apenas_numeros(row[4]) == num:
                 mapa_encontrados[num] = "ALTA"
                 break
-        # Procurar na EMERGENCIAL
         if num not in mapa_encontrados:
             for row in dados_emerg[2:]:
                 if len(row) > 3 and limpar_apenas_numeros(row[3]) == num:
@@ -102,17 +84,18 @@ def app():
     if not client: return
     sh = client.open_by_key(SPREADSHEET_ID)
 
-    # --- SIDEBAR: SCANNER VISUAL ATUALIZADO ---
+    # --- SIDEBAR ATUALIZADA ---
     st.sidebar.title("🔍 Scanner de Duplicatas")
+    # O Scanner roda a cada 'Rerun' do Streamlit, garantindo visão real
     duplicas_globais = scanner_duplicatas_globais(sh)
     
     if duplicas_globais:
-        st.sidebar.warning(f"Existem {len(duplicas_globais)} duplicatas entre abas!")
+        st.sidebar.warning(f"Existem {len(duplicas_globais)} duplicatas detectadas!")
         if st.sidebar.button("Mostrar Lista"):
             for num in duplicas_globais:
                 st.sidebar.code(num)
     else:
-        st.sidebar.success("A planilha não possui dados duplicados")
+        st.sidebar.success("Nenhuma duplicata entre abas.")
 
     # --- FORMULÁRIO ---
     aba_dest = st.selectbox("Selecione a Aba de Destino", ["ALTA", "EMERGENCIAL"])
@@ -128,9 +111,8 @@ def app():
             valor = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
             status = st.selectbox("Status *", ["COTAÇÃO", "PEDIDO", "APROVADA", "NÃO APROVADA"])
             solicitacao_raw = st.text_input("Nº Solicitação")
-            pedidos_raw = st.text_area("Bloco de Pedidos/Texto Sujo")
+            pedidos_raw = st.text_area("Bloco de Pedidos")
         
-        avaliacao = st.selectbox("Avaliação", ["EXPEDIÇÃO", "FINANCEIRO", "UNIDADE", "CREDITO"]) if aba_dest == "ALTA" else ""
         btn_cadastrar = st.form_submit_button("CONCLUIR CADASTRO")
 
     if btn_cadastrar:
@@ -140,61 +122,66 @@ def app():
         
         if not todos_itens:
             st.warning("Nenhum número detectado.")
-            return
+        else:
+            # BUSCA EM TEMPO REAL: Chamamos a função aqui dentro para ler a planilha AGORA
+            mapa_geral = buscar_em_todas_as_abas_detalhado(sh, todos_itens)
 
-        mapa_geral = buscar_em_todas_as_abas_detalhado(sh, todos_itens)
+            # Logica COTAÇÃO
+            if status == "COTAÇÃO":
+                for s in s_nums:
+                    if s in mapa_geral:
+                        st.warning(f"⚠️ A solicitação {s} já está em COTAÇÃO na aba {mapa_geral[s]}")
+                        mapa_geral.pop(s) # Tira do erro para permitir cadastro
+                    else:
+                        st.info(f"ℹ️ A solicitação {s} será incluída como COTAÇÃO.")
 
-        if status == "COTAÇÃO":
-            for s in s_nums:
-                if s in mapa_geral:
-                    st.warning(f"⚠️ A solicitação {s} já está em **COTAÇÃO** na aba **{mapa_geral[s]}**")
-                    mapa_geral.pop(s)
+            # Logica PEDIDO
+            if status == "PEDIDO":
+                for s in s_nums:
+                    if s in mapa_geral: mapa_geral.pop(s)
+
+            # Se ainda houver duplicatas reais
+            if mapa_geral:
+                for num, aba in mapa_geral.items():
+                    st.error(f"❌ O número {num} já existe na aba {aba}!")
+                st.stop()
+
+            # Executa Exclusão e Cadastro
+            msg_exc = ""
+            if status == "PEDIDO" and s_nums:
+                q = excluir_por_numero(sh, "ALTA", s_nums) + excluir_por_numero(sh, "EMERGENCIAL", s_nums)
+                if q > 0: msg_exc = " (Anterior removido)"
+
+            ws = sh.worksheet(aba_dest)
+            dt_f = data_cad.strftime("%d/%m/%Y")
+            col_ref = 5 if aba_dest == "ALTA" else 4
+            
+            for item in todos_itens:
+                prox = get_actual_next_row(ws, col_ref)
+                if aba_dest == "ALTA":
+                    formula = f'=IF(B{prox}=""; ""; TODAY()-B{prox})'
+                    linha = [formula, dt_f, unidade, carro, item, valor, fornecedor, status]
+                    ws.update(f"A{prox}:I{prox}", [linha], value_input_option='USER_ENTERED')
                 else:
-                    st.info(f"ℹ️ A solicitação {s} foi incluída na aba **{aba_dest}** como **COTAÇÃO**")
+                    d_h = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                    linha = [unidade, d_h, carro, item, valor, fornecedor, "", "", "", status]
+                    ws.update(f"A{prox}:J{prox}", [linha], value_input_option='USER_ENTERED')
 
-        if status == "PEDIDO":
-            for s in s_nums:
-                if s in mapa_geral: mapa_geral.pop(s)
+            st.success(f"✅ Cadastrado!{msg_exc}")
+            st.balloons()
+            st.rerun() # FORÇA A ATUALIZAÇÃO DA PÁGINA PARA LIMPAR O ESTADO
 
-        if mapa_geral:
-            for num, aba in mapa_geral.items():
-                st.error(f"❌ O número {num} já existe como pedido na aba {aba}!")
-            st.stop()
-
-        msg_exclusao = ""
-        if status == "PEDIDO" and s_nums:
-            qtd_e = excluir_por_numero(sh, "ALTA", s_nums) + excluir_por_numero(sh, "EMERGENCIAL", s_nums)
-            if qtd_e > 0: msg_exclusao = f" (Solicitação {', '.join(s_nums)} antiga removida)"
-
-        ws = sh.worksheet(aba_dest)
-        dt_f = data_cad.strftime("%d/%m/%Y")
-        col_ref = 5 if aba_dest == "ALTA" else 4
-        
-        for item in todos_itens:
-            prox = get_actual_next_row(ws, col_ref)
-            if aba_dest == "ALTA":
-                formula = f'=IF(B{prox}=""; ""; TODAY()-B{prox})'
-                linha = [formula, dt_f, unidade, carro, item, valor, fornecedor, status, avaliacao]
-                ws.update(f"A{prox}:I{prox}", [linha], value_input_option='USER_ENTERED')
-            else:
-                d_h = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                linha = [unidade, d_h, carro, item, valor, fornecedor, "", "", "", status]
-                ws.update(f"A{prox}:J{prox}", [linha], value_input_option='USER_ENTERED')
-
-        st.success(f"✅ Sucesso! {len(todos_itens)} item(s) processados.{msg_exclusao}")
-        st.balloons()
-
+    # --- EXCLUSÃO MANUAL ---
     st.markdown("---")
-    st.subheader("🗑️ Excluir Registros Manualmente")
-    with st.expander("Ferramentas de exclusão"):
-        aba_ex = st.selectbox("Aba", ["ALTA", "EMERGENCIAL"])
-        txt_ex = st.text_area("Cole os textos aqui")
-        if st.button("CONFIRMAR EXCLUSÃO"):
-            nums_ex = extrair_numeros_da_string(txt_ex)
-            if nums_ex:
-                q = excluir_por_numero(sh, aba_ex, nums_ex)
-                st.success(f"🗑️ {q} linha(s) removida(s)!")
-                st.rerun()
-
+    st.subheader("🗑️ Exclusão Manual")
+    with st.expander("Ferramentas"):
+        aba_ex = st.selectbox("Aba", ["ALTA", "EMERGENCIAL"], key="ex_aba")
+        txt_ex = st.text_area("Números para excluir", key="ex_txt")
+        if st.button("EXCLUIR"):
+            n_ex = extrair_numeros_da_string(txt_ex)
+            if n_ex:
+                qtd = excluir_por_numero(sh, aba_ex, n_ex)
+                st.success(f"Removido {qtd} itens.")
+                st.rerun() # FORÇA RELEITURA IMEDIATA
 if __name__ == "__main__":
     app()
