@@ -8,14 +8,8 @@ from datetime import datetime
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 SPREADSHEET_ID = "1n5I4U7siMsRB-eeAcWr56zNqudlcVbK7T2OImIjnMWs"
 
-# --- OPÇÕES PARA SELEÇÃO ---
-OPCOES_UNIDADE = [
-    "INDÚSTRIA", "JARDIM MONTANHÊS", "SÃO MARCOS", "NOVA LIMA", "ITAÚNA", 
-    "LAGOA SANTA", "DURVAL DE BARROS", "MONTES CLAROS", "VARGINHA", "NEVES", 
-    "LAVRAS", "IPATINGA", "VESPASIANO", "GARANTIA", "VENDA DE VEÍCULOS", 
-    "ADMINISTRATIVO", "PREDIO ADM", "EXPEDIÇÃO", "CEL. FABRICIANO", "OLIVEIRA", 
-    "MORRO ALTO", "TRANSNORTE", "TIMOTEO", "ADMINISTRAÇÃO"
-]
+# Opções de Unidade, Status e Avaliação permanecem as mesmas...
+OPCOES_UNIDADE = ["INDÚSTRIA", "JARDIM MONTANHÊS", "SÃO MARCOS", "NOVA LIMA", "ITAÚNA", "LAGOA SANTA", "DURVAL DE BARROS", "MONTES CLAROS", "VARGINHA", "NEVES", "LAVRAS", "IPATINGA", "VESPASIANO", "GARANTIA", "VENDA DE VEÍCULOS", "ADMINISTRATIVO", "PREDIO ADM", "EXPEDIÇÃO", "CEL. FABRICIANO", "OLIVEIRA", "MORRO ALTO", "TRANSNORTE", "TIMOTEO", "ADMINISTRAÇÃO"]
 OPCOES_STATUS = ["NÃO APROVADA", "APROVADA", "COTAÇÃO", "PEDIDO"]
 OPCOES_AVALIACAO = ["EXPEDIÇÃO", "FINANCEIRO", "UNIDADE", "CREDITO"]
 
@@ -31,48 +25,39 @@ def get_gspread_client():
         st.error(f"Erro de autenticação: {e}")
         return None
 
-def get_first_empty_row(ws, col_index):
-    """Encontra a primeira linha realmente vazia baseada em uma coluna essencial (ex: PEDIDO)"""
-    # col_values traz apenas as células que possuem conteúdo
-    values = ws.col_values(col_index)
-    return len(values) + 1
-
-def find_number_in_sheets(client, number):
-    sh = client.open_by_key(SPREADSHEET_ID)
-    for aba_name in ["ALTA", "EMERGENCIAL"]:
-        ws = sh.worksheet(aba_name)
-        col_idx = 6 if aba_name == "ALTA" else 4
-        all_values = ws.col_values(col_idx)
-        if str(number) in all_values:
-            return aba_name, all_values.index(str(number)) + 1
-    return None, None
-
-def delete_row_by_request(client, request_number):
-    aba, linha = find_number_in_sheets(client, request_number)
-    if aba and linha:
-        sh = client.open_by_key(SPREADSHEET_ID)
-        sh.worksheet(aba).delete_rows(linha)
-        return True
-    return False
+def get_actual_next_row(ws, col_index):
+    """
+    Encontra a primeira linha realmente disponível ignorando fórmulas e bordas.
+    Busca o primeiro espaço vazio na coluna de referência (Pedido).
+    """
+    col_values = ws.col_values(col_index)
+    # Remove o cabeçalho (linhas 1 e 2)
+    data_values = col_values[2:] if len(col_values) > 2 else []
+    
+    for i, value in enumerate(data_values):
+        if not value.strip(): # Se encontrar uma célula vazia no meio da tabela
+            return i + 3
+            
+    return len(col_values) + 1
 
 def app():
     st.title("📝 Cadastro de Pedidos e Solicitações")
+    
+    # DICA: Se ver erros de "TypeError", limpe o cache do navegador (Ctrl+F5)
     client = get_gspread_client()
     if not client: return
-
     sh = client.open_by_key(SPREADSHEET_ID)
+    
     aba_selecionada = st.selectbox("Selecione a Aba de Destino", ["ALTA", "EMERGENCIAL"])
 
     with st.form("form_cadastro", clear_on_submit=False):
         st.subheader(f"Dados para {aba_selecionada}")
         col1, col2 = st.columns(2)
-        
         with col1:
             data_cad = st.date_input("Data *", datetime.now())
             unidade = st.selectbox("Unidade *", OPCOES_UNIDADE)
             carro = st.text_input("Carro | Utilização")
             fornecedor = st.text_input("Fornecedor")
-            
         with col2:
             valor = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
             status = st.selectbox("Status *", OPCOES_STATUS)
@@ -80,7 +65,7 @@ def app():
             pedidos_input = st.text_area("Nº Pedidos - Separe por vírgula")
 
         avaliacao = st.selectbox("Avaliação", OPCOES_AVALIACAO) if aba_selecionada == "ALTA" else ""
-        responsavel, num_ad, nf = ("", "", "")
+        responsavel, num_ad, nf = "", "", ""
         if aba_selecionada == "EMERGENCIAL":
             responsavel = st.text_input("Responsável Coleta/Entrega")
             num_ad = st.text_input("Nº AD")
@@ -89,45 +74,38 @@ def app():
         btn_cadastrar = st.form_submit_button("CONCLUIR CADASTRO")
 
     if btn_cadastrar:
-        lista_pedidos = [p.strip() for p in pedidos_input.split(",") if p.strip()]
-        if solicitacao and lista_pedidos and status == "PEDIDO":
-            delete_row_by_request(client, solicitacao)
-
         ws_destino = sh.worksheet(aba_selecionada)
         data_formatada = data_cad.strftime("%d/%m/%Y")
-        itens_para_cadastrar = lista_pedidos if lista_pedidos else [solicitacao]
+        itens_para_cadastrar = [p.strip() for p in pedidos_input.split(",") if p.strip()] or [solicitacao]
         
-        # Define a coluna de referência para achar o pé da tabela (Coluna PEDIDO)
+        # COLUNA DE REFERÊNCIA: F (6) na ALTA, D (4) na EMERGENCIAL
         col_ref = 6 if aba_selecionada == "ALTA" else 4
         
         sucesso_count = 0
         for item in itens_para_cadastrar:
-            aba_dup, lin_dup = find_number_in_sheets(client, item)
-            if aba_dup:
-                st.warning(f"O número {item} já existe na aba {aba_dup}, linha {lin_dup}.")
-                continue
+            # 1. ENCONTRAR A LINHA EXATA
+            proxima_linha = get_actual_next_row(ws_destino, col_ref)
             
-            # 1. Encontrar a próxima linha disponível
-            proxima_linha = get_first_empty_row(ws_destino, col_ref)
-            
-            # 2. Montar a linha SEM o "" inicial para não deslocar (Item 1)
+            # 2. MONTAR A LINHA PARA ENCAIXAR NAS BORDAS
             if aba_selecionada == "ALTA":
-                # Estrutura baseada na imagem: A:DIAS, B:DATA, C:UNIDADE, D:CARRO, E:PEDIDO...
-                formula_dias = f'=IF(B{proxima_linha}="";"";TODAY()-B{proxima_linha})'
+                # Alinhamento conforme imagem 23-17-24:
+                # B:DIAS, C:DATA, D:UNIDADE, E:CARRO, F:PEDIDO, G:VALOR, H:FORNECEDOR, I:STATUS, J:AVALIAÇÃO
+                formula_dias = f'=IF(C{proxima_linha}="";"";TODAY()-C{proxima_linha})'
                 nova_linha = [formula_dias, data_formatada, unidade, carro, item, valor, fornecedor, status, avaliacao]
-                range_update = f"A{proxima_linha}:I{proxima_linha}"
+                # Inicia na Coluna B (2) até J (10)
+                range_target = f"B{proxima_linha}:J{proxima_linha}"
             else:
                 # EMERGENCIAL: A:UNIDADE, B:DATA, C:CARRO, D:PEDIDO, E:VALOR, F:FORNECEDOR, G:RESP, H:AD, I:DATA_PGTO, J:STATUS
                 data_hora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                 nova_linha = [unidade, data_hora, carro, item, valor, fornecedor, responsavel, num_ad, "", status]
-                range_update = f"A{proxima_linha}:J{proxima_linha}"
+                range_target = f"A{proxima_linha}:J{proxima_linha}"
 
-            # 3. Usar 'update' em vez de 'append_row' para preencher os templates formatados (Item 2)
-            ws_destino.update(range_update, [nova_linha], value_input_option='USER_ENTERED')
+            # 3. ATUALIZAR EM VEZ DE ADICIONAR NOVA LINHA
+            ws_destino.update(range_target, [nova_linha], value_input_option='USER_ENTERED')
             sucesso_count += 1
 
         if sucesso_count > 0:
-            st.success(f"Sucesso! {sucesso_count} itens cadastrados no pé real da tabela.")
+            st.success(f"Cadastrado na linha {proxima_linha} com sucesso!")
             st.balloons()
 
 if __name__ == "__main__":
