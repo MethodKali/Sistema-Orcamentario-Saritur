@@ -21,12 +21,7 @@ def get_gspread_client():
         return None
 
 def extrair_numeros_da_string(texto):
-    """
-    Lógica BACKLOG.py: Identifica todos os números em uma string suja.
-    Ex: 'Pedido: 123; Solic-456/789' -> ['123', '456', '789']
-    """
-    if not texto:
-        return []
+    if not texto: return []
     return re.findall(r'\d+', str(texto))
 
 def get_actual_next_row(ws, col_index):
@@ -36,19 +31,25 @@ def get_actual_next_row(ws, col_index):
             return i
     return len(col_values) + 1
 
-def buscar_em_todas_as_abas(sh, lista_numeros):
-    encontrados_alta, encontrados_emergencial = [], []
+def buscar_em_todas_as_abas_detalhado(sh, lista_numeros):
+    """Retorna um dicionário mapeando o número à aba onde foi encontrado."""
+    mapa_encontrados = {}
     dados_alta = sh.worksheet("ALTA").get_all_values()
     dados_emerg = sh.worksheet("EMERGENCIAL").get_all_values()
     
     for num in lista_numeros:
+        # Procurar na ALTA
         for row in dados_alta[2:]:
             if len(row) > 4 and re.sub(r'\D', '', row[4]) == num:
-                encontrados_alta.append(num)
-        for row in dados_emerg[2:]:
-            if len(row) > 3 and re.sub(r'\D', '', row[3]) == num:
-                encontrados_emergencial.append(num)
-    return list(set(encontrados_alta)), list(set(encontrados_emergencial))
+                mapa_encontrados[num] = "ALTA"
+                break
+        # Procurar na EMERGENCIAL (se ainda não achou)
+        if num not in mapa_encontrados:
+            for row in dados_emerg[2:]:
+                if len(row) > 3 and re.sub(r'\D', '', row[3]) == num:
+                    mapa_encontrados[num] = "EMERGENCIAL"
+                    break
+    return mapa_encontrados
 
 def excluir_por_numero(sh, aba_nome, lista_numeros):
     ws = sh.worksheet(aba_nome)
@@ -67,9 +68,7 @@ def excluir_por_numero(sh, aba_nome, lista_numeros):
 def scanner_duplicatas_globais(sh):
     pedidos_alta = [re.sub(r'\D', '', row[4]) for row in sh.worksheet("ALTA").get_all_values()[2:] if len(row) > 4]
     pedidos_emerg = [re.sub(r'\D', '', row[3]) for row in sh.worksheet("EMERGENCIAL").get_all_values()[2:] if len(row) > 3]
-    pedidos_alta = set([p for p in pedidos_alta if p])
-    pedidos_emerg = set([p for p in pedidos_emerg if p])
-    return sorted(list(pedidos_alta.intersection(pedidos_emerg)))
+    return sorted(list(set(pedidos_alta).intersection(set(pedidos_emerg))))
 
 def app():
     st.title("📝 Gestão de Pedidos e Solicitações")
@@ -77,18 +76,17 @@ def app():
     if not client: return
     sh = client.open_by_key(SPREADSHEET_ID)
 
-    # --- SIDEBAR: SCANNER VISUAL ---
+    # --- SIDEBAR: SCANNER ---
     st.sidebar.title("🔍 Scanner de Duplicatas")
     duplicas_globais = scanner_duplicatas_globais(sh)
     if duplicas_globais:
         st.sidebar.warning(f"Existem {len(duplicas_globais)} duplicatas detectadas!")
         if st.sidebar.button("Mostrar Lista"):
-            for num in duplicas_globais:
-                st.sidebar.code(num)
+            for num in duplicas_globais: st.sidebar.code(num)
     else:
         st.sidebar.success("Nenhuma duplicata entre abas.")
 
-    # --- FORMULÁRIO PRINCIPAL ---
+    # --- FORMULÁRIO ---
     aba_dest = st.selectbox("Selecione a Aba de Destino", ["ALTA", "EMERGENCIAL"])
 
     with st.form("form_cadastro", clear_on_submit=True):
@@ -101,52 +99,50 @@ def app():
         with col2:
             valor = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
             status = st.selectbox("Status *", ["COTAÇÃO", "PEDIDO", "APROVADA", "NÃO APROVADA"])
-            solicitacao_raw = st.text_input("Nº Solicitação (Ex: 300123)")
-            pedidos_raw = st.text_area("Bloco de Pedidos (Pode colar texto sujo)")
-
+            solicitacao_raw = st.text_input("Nº Solicitação")
+            pedidos_raw = st.text_area("Bloco de Pedidos/Texto Sujo")
+        
         avaliacao = st.selectbox("Avaliação", ["EXPEDIÇÃO", "FINANCEIRO", "UNIDADE", "CREDITO"]) if aba_dest == "ALTA" else ""
         btn_cadastrar = st.form_submit_button("CONCLUIR CADASTRO")
 
     if btn_cadastrar:
-        # TRATAMENTO INTELIGENTE (Regex)
-        s_numeros = extrair_numeros_da_string(solicitacao_raw)
-        p_numeros = extrair_numeros_da_string(pedidos_raw)
-        
-        # Consolida todos os números encontrados
-        todos_itens = p_numeros + s_numeros
+        s_nums = extrair_numeros_da_string(solicitacao_raw)
+        p_nums = extrair_numeros_da_string(pedidos_raw)
+        todos_itens = p_nums + s_nums
         
         if not todos_itens:
-            st.warning("Nenhum número de Solicitação ou Pedido foi detectado.")
+            st.warning("Nenhum número detectado.")
             return
 
-        # 1. VALIDAÇÃO CRUZADA E ALERTAS
-        alta_check, emerg_check = buscar_em_todas_as_abas(sh, todos_itens)
-        
-        # LÓGICA DE ALERTA PARA COTAÇÃO
+        # 1. VALIDAÇÃO CRUZADA DETALHADA
+        mapa_geral = buscar_em_todas_as_abas_detalhado(sh, todos_itens)
+
+        # Tratar alertas de COTAÇÃO
         if status == "COTAÇÃO":
-            solic_existente = [n for n in s_numeros if n in alta_check or n in emerg_check]
-            if solic_existente:
-                st.warning(f"⚠️ Alerta: A solicitação {', '.join(solic_existente)} já existe na planilha! Cadastrando novos itens...")
-                # Remove da lista de erro fatal para permitir o cadastro
-                alta_check = [n for n in alta_check if n not in s_numeros]
-                emerg_check = [n for n in emerg_check if n not in s_numeros]
+            for s in s_nums:
+                if s in mapa_geral:
+                    st.warning(f"⚠️ A solicitação {s} já está em **COTAÇÃO** na aba **{mapa_geral[s]}**")
+                    # Removemos do mapa de erros fatais para permitir cadastro de outros itens
+                    mapa_geral.pop(s)
+                else:
+                    st.info(f"ℹ️ A solicitação {s} foi incluída na aba **{aba_dest}** como **COTAÇÃO**")
 
-        # LÓGICA PARA STATUS PEDIDO (Limpa a solicitação da lista de erros para deletar depois)
+        # Se for PEDIDO, removemos a solicitação do mapa de erro pois ela será excluída
         if status == "PEDIDO":
-            alta_check = [n for n in alta_check if n not in s_numeros]
-            emerg_check = [n for n in emerg_check if n not in s_numeros]
+            for s in s_nums:
+                if s in mapa_geral: mapa_geral.pop(s)
 
-        # SE AINDA HOUVER DUPLICATAS (ERRO REAL)
-        if alta_check or emerg_check:
-            if alta_check: st.error(f"❌ Números já cadastrados na ALTA: {', '.join(alta_check)}")
-            if emerg_check: st.error(f"❌ Números já cadastrados na EMERGENCIAL: {', '.join(emerg_check)}")
+        # SE AINDA HOUVER DUPLICATAS (ERRO REAL EM PEDIDOS)
+        if mapa_geral:
+            for num, aba in mapa_geral.items():
+                st.error(f"❌ O número {num} já existe como pedido na aba {aba}!")
             st.stop()
 
         # 2. EXCLUSÃO AUTOMÁTICA (Somente PEDIDO)
         msg_exclusao = ""
-        if status == "PEDIDO" and s_numeros:
-            qtd_e = excluir_por_numero(sh, "ALTA", s_numeros) + excluir_por_numero(sh, "EMERGENCIAL", s_numeros)
-            if qtd_e > 0: msg_exclusao = f" (Solicitação {', '.join(s_numeros)} antiga removida)"
+        if status == "PEDIDO" and s_nums:
+            qtd_e = excluir_por_numero(sh, "ALTA", s_nums) + excluir_por_numero(sh, "EMERGENCIAL", s_nums)
+            if qtd_e > 0: msg_exclusao = f" (Solicitação {', '.join(s_nums)} removida)"
 
         # 3. CADASTRO
         ws = sh.worksheet(aba_dest)
@@ -164,27 +160,21 @@ def app():
                 linha = [unidade, d_h, carro, item, valor, fornecedor, "", "", "", status]
                 ws.update(f"A{prox}:J{prox}", [linha], value_input_option='USER_ENTERED')
 
-        st.success(f"✅ Sucesso! {len(todos_itens)} item(s) cadastrados na aba {aba_dest}.{msg_exclusao}")
+        st.success(f"✅ Sucesso! {len(todos_itens)} item(s) processados.{msg_exclusao}")
         st.balloons()
 
-    # --- MÓDULO: EXCLUSÃO MANUAL COM TRATAMENTO INTELIGENTE ---
+    # --- MÓDULO EXCLUSÃO ---
     st.markdown("---")
     st.subheader("🗑️ Excluir Registros Manualmente")
-    with st.expander("Opções de exclusão"):
-        aba_excluir = st.selectbox("Aba para exclusão", ["ALTA", "EMERGENCIAL"])
-        numeros_ex_raw = st.text_area("Cole os números/textos aqui para excluir")
-        
+    with st.expander("Abrir ferramentas de exclusão"):
+        aba_ex = st.selectbox("Aba", ["ALTA", "EMERGENCIAL"])
+        txt_ex = st.text_area("Cole os textos/números aqui")
         if st.button("CONFIRMAR EXCLUSÃO"):
-            lista_ex = extrair_numeros_da_string(numeros_ex_raw)
-            if lista_ex:
-                qtd = excluir_por_numero(sh, aba_excluir, lista_ex)
-                if qtd > 0:
-                    st.success(f"🗑️ {qtd} linha(s) removida(s)!")
-                    st.rerun()
-                else:
-                    st.info("Nenhum desses números foi encontrado.")
-            else:
-                st.error("Nenhum número detectado no texto.")
+            nums_ex = extrair_numeros_da_string(txt_ex)
+            if nums_ex:
+                q = excluir_por_numero(sh, aba_ex, nums_ex)
+                st.success(f"🗑️ {q} linha(s) removida(s)!")
+                st.rerun()
 
 if __name__ == "__main__":
     app()
