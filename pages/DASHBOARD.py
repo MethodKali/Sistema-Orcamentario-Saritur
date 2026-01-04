@@ -30,37 +30,54 @@ def limpar_moeda(v):
     except: return 0.0
 
 def preparar_dados_consolidados(data_dict, d_inicio, d_fim):
-    lista_dfs = []
+    lista_final = []
     
-    # Processar ALTA (Apenas Status PEDIDO)
-    df_a = data_dict.get('ALTA', pd.DataFrame()).copy()
-    if not df_a.empty:
-        df_a['DATA_DT'] = pd.to_datetime(df_a['DATA'], dayfirst=True, errors='coerce').dt.date
-        df_a = df_a[df_a['STATUS'].astype(str).str.strip().str.upper() == "PEDIDO"]
-        df_a['ORIGEM'] = 'ALTA'
-        lista_dfs.append(df_a)
+    # --- PROCESSAR ALTA ---
+    df_a_raw = data_dict.get('ALTA', pd.DataFrame()).copy()
+    if not df_a_raw.empty:
+        # Garantir nomes de colunas limpos
+        df_a_raw.columns = [str(c).strip().upper() for c in df_a_raw.columns]
         
-    # Processar EMERGENCIAL
-    df_e = data_dict.get('EMERGENCIAL', pd.DataFrame()).copy()
-    if not df_e.empty:
-        df_e['DATA_DT'] = pd.to_datetime(df_e['DATA'], dayfirst=True, errors='coerce').dt.date
-        df_e['ORIGEM'] = 'EMERGENCIAL'
-        lista_dfs.append(df_e)
+        # Filtros de Data e Status
+        df_a_raw['DATA_DT'] = pd.to_datetime(df_a_raw['DATA'], dayfirst=True, errors='coerce').dt.date
+        mask = (df_a_raw['DATA_DT'] >= d_inicio) & (df_a_raw['DATA_DT'] <= d_fim) & \
+               (df_a_raw['STATUS'].astype(str).str.strip().str.upper() == "PEDIDO")
         
-    if not lista_dfs: return pd.DataFrame()
+        df_a_filt = df_a_raw.loc[mask].copy()
+        if not df_a_filt.empty:
+            # Criamos um DF novo só com o necessário para evitar o InvalidIndexError
+            df_a_final = pd.DataFrame({
+                'UNIDADE': df_a_filt['UNIDADE'].astype(str).str.strip().str.upper(),
+                'VALOR_NUM': df_a_filt['VALOR'].apply(limpar_moeda),
+                'ORIGEM': 'ALTA'
+            })
+            lista_final.append(df_a_final)
+            
+    # --- PROCESSAR EMERGENCIAL ---
+    df_e_raw = data_dict.get('EMERGENCIAL', pd.DataFrame()).copy()
+    if not df_e_raw.empty:
+        df_e_raw.columns = [str(c).strip().upper() for c in df_e_raw.columns]
+        
+        df_e_raw['DATA_DT'] = pd.to_datetime(df_e_raw['DATA'], dayfirst=True, errors='coerce').dt.date
+        mask = (df_e_raw['DATA_DT'] >= d_inicio) & (df_e_raw['DATA_DT'] <= d_fim)
+        
+        df_e_filt = df_e_raw.loc[mask].copy()
+        if not df_e_filt.empty:
+            df_e_final = pd.DataFrame({
+                'UNIDADE': df_e_filt['UNIDADE'].astype(str).str.strip().str.upper(),
+                'VALOR_NUM': df_e_filt['VALOR'].apply(limpar_moeda),
+                'ORIGEM': 'EMERGENCIAL'
+            })
+            lista_final.append(df_e_final)
+            
+    if not lista_final: 
+        return pd.DataFrame(columns=['UNIDADE', 'ORIGEM', 'VALOR_NUM'])
     
-    df_total = pd.concat(lista_dfs, ignore_index=True)
-    df_total['VALOR_NUM'] = df_total['VALOR'].apply(limpar_moeda)
-    df_total['UNIDADE'] = df_total['UNIDADE'].astype(str).str.strip().str.upper()
+    # Concatenação segura de DataFrames com colunas idênticas
+    df_total = pd.concat(lista_final, ignore_index=True)
     
-    # Filtrar por data
-    mask = (df_total['DATA_DT'] >= d_inicio) & (df_total['DATA_DT'] <= d_fim)
-    df_filtrado = df_total.loc[mask]
-    
-    # Agrupar por Unidade e Origem
-    df_grouped = df_filtrado.groupby(['UNIDADE', 'ORIGEM'])['VALOR_NUM'].sum().reset_index()
-    
-    return df_grouped
+    # Agrupamento final para o gráfico
+    return df_total.groupby(['UNIDADE', 'ORIGEM'])['VALOR_NUM'].sum().reset_index()
 
 def gerar_grafico_ranking_empilhado(df, titulo):
     if df.empty: return None
