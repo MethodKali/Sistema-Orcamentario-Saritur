@@ -99,7 +99,7 @@ def gerar_grafico_ranking(df, d_ini, d_fim):
     df_plot = df.groupby(['UNIDADE', 'ORIGEM'])['VALOR_NUM'].sum().reset_index()
     
     # Calcular ordem do Ranking (Total por unidade)
-    df_ranking = df_plot.groupby('UNIDADE')['VALOR_NUM'].sum().sort_values(ascending=True).reset_index()
+    df_ranking = df_plot.groupby('UNIDADE')['VALOR_NUM'].sum().sort_values(ascending=False).reset_index()
     unidades_ordem = df_ranking['UNIDADE'].tolist()
     
     total_geral = df_plot['VALOR_NUM'].sum()
@@ -131,7 +131,7 @@ def gerar_grafico_ranking(df, d_ini, d_fim):
 
     fig.update_layout(
         title=f"Ranking de Gastos Consolidado<br><sup>{d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}</sup>",
-        paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF",
+        paper_bgcolor="#030303", plot_bgcolor="#FFFFFF",
         height=max(500, len(unidades_ordem) * 45),
         margin=dict(l=200, r=150, t=100, b=100),
         xaxis=dict(visible=False), # Esconde o eixo X para focar nos rótulos
