@@ -156,7 +156,7 @@ if btn_cadastrar:
                 # FÓRMULA: =IF(C{linha}=""; ""; TODAY()-C{linha}) -> Compara com a Coluna C (Data)
                 formula_dias = f'=IF(C{linha_atual}=""; ""; TODAY()-C{linha_atual})'
                 # Estrutura: A:Vazio | B:Dias | C:Data | D:Unidade | E:Carro | F:Item | G:Valor | H:Fornecedor | I:Status
-                novas_linhas.append(["", formula_dias, dt_str, unidade, carro, item, valor, fornecedor, status_item])
+                novas_linhas.append([formula_dias, dt_str, unidade, carro, item, valor, fornecedor, status_item])
             else:
                 # EMERGENCIAL: Mantém o layout original
                 novas_linhas.append([unidade, datetime.now().strftime("%d/%m/%Y %H:%M:%S"), carro, item, valor, fornecedor, "", "", "", ""])
