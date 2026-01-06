@@ -28,15 +28,12 @@ def limpar_apenas_numeros(texto):
     return re.sub(r'\D', '', str(texto))
 
 def get_actual_next_row(ws):
-    """Retorna o número da próxima linha física vazia na planilha"""
-    return len(ws.col_values(3)) + 1 # Baseado na coluna C (Data) que sempre terá valor
+    return len(ws.col_values(3)) + 1
 
 def scanner_duplicatas_globais(sh):
     dados_alta = sh.worksheet("ALTA").get_all_values()[2:]
     dados_emerg = sh.worksheet("EMERGENCIAL").get_all_values()[2:]
-    # Na ALTA o número agora está na Coluna F (índice 5)
     pedidos_alta = [limpar_apenas_numeros(r[5]) for r in dados_alta if len(r) > 5 and limpar_apenas_numeros(r[5])]
-    # Na EMERGENCIAL o número continua na Coluna D (índice 3)
     pedidos_emerg = [limpar_apenas_numeros(r[3]) for r in dados_emerg if len(r) > 3 and limpar_apenas_numeros(r[3])]
     return sorted(list(set(pedidos_alta).intersection(set(pedidos_emerg))))
 
@@ -58,7 +55,7 @@ def buscar_em_todas_as_abas_detalhado(sh, lista_numeros):
 
 def excluir_por_numero(sh, aba_nome, lista_numeros):
     ws = sh.worksheet(aba_nome)
-    col_idx = 6 if aba_nome == "ALTA" else 4 # Coluna F na ALTA, Coluna D na EMERGENCIAL
+    col_idx = 6 if aba_nome == "ALTA" else 4
     col_values = ws.col_values(col_idx)
     linhas_para_deletar = []
     for i, valor in enumerate(col_values):
@@ -70,6 +67,37 @@ def excluir_por_numero(sh, aba_nome, lista_numeros):
         return len(linhas_para_deletar)
     return 0
 
+# --- NOVA LÓGICA: LIMPEZA DE DUPLICATAS AUTOMÁTICA ---
+def limpar_todas_duplicatas(sh):
+    total_removido = 0
+    # Processamos ambas as abas
+    for aba_nome in ["ALTA", "EMERGENCIAL"]:
+        ws = sh.worksheet(aba_nome)
+        dados = ws.get_all_values()
+        col_idx = 5 if aba_nome == "ALTA" else 3 # Índice 0-based: F=5, D=3
+        
+        vistos = set()
+        linhas_para_excluir = []
+        
+        # Percorre de cima para baixo
+        for i, linha in enumerate(dados):
+            if i < 2: continue # Pula cabeçalhos
+            if len(linha) > col_idx:
+                num = limpar_apenas_numeros(linha[col_idx])
+                if num:
+                    if num in vistos:
+                        linhas_para_excluir.append(i + 1)
+                    else:
+                        vistos.add(num)
+        
+        if linhas_para_excluir:
+            # Exclui de baixo para cima para não perder a referência do índice
+            for idx in sorted(linhas_para_excluir, reverse=True):
+                ws.delete_rows(idx)
+            total_removido += len(linhas_para_excluir)
+            
+    return total_removido
+
 # --- INÍCIO DO APP ---
 client = get_gspread_client()
 if not client: st.stop()
@@ -79,7 +107,7 @@ sh = client.open_by_key(SPREADSHEET_ID)
 st.sidebar.title("🔍 Scanner de Duplicatas")
 duplicas_globais = scanner_duplicatas_globais(sh)
 if duplicas_globais:
-    st.sidebar.warning(f"Existem {len(duplicas_globais)} duplicatas!")
+    st.sidebar.warning(f"Existem {len(duplicas_globais)} duplicatas entre abas!")
     if st.sidebar.button("Mostrar Lista"):
         for num in duplicas_globais: st.sidebar.code(num)
 else:
@@ -118,13 +146,11 @@ if btn_cadastrar:
     p_nums = extrair_numeros_da_string(pedidos_raw)
     st.session_state.alertas_erro = []
     
-    # 1. EXCLUSÃO PRÉVIA
     msg_exc = ""
     if s_nums:
         qtd_rem = excluir_por_numero(sh, "ALTA", s_nums) + excluir_por_numero(sh, "EMERGENCIAL", s_nums)
         if qtd_rem > 0: msg_exc = f" ({qtd_rem} antigo(s) removido(s))"
 
-    # 2. ITENS PARA CADASTRAR
     if aba_dest == "ALTA" and status_selecionado == "PEDIDO":
         itens_para_validar = p_nums
     else:
@@ -136,13 +162,11 @@ if btn_cadastrar:
             st.rerun()
         st.stop()
 
-    # 3. VALIDAÇÃO
     mapa_geral = buscar_em_todas_as_abas_detalhado(sh, itens_para_validar)
     itens_finais = [i for i in itens_para_validar if i not in mapa_geral]
     for item in itens_para_validar:
         if item in mapa_geral: st.session_state.alertas_erro.append(f"❌ Item {item} já existe na aba {mapa_geral[item]}.")
 
-    # 4. APPEND COM FÓRMULA DINÂMICA
     if itens_finais:
         ws = sh.worksheet(aba_dest)
         dt_str = data_cad.strftime("%d/%m/%Y")
@@ -153,12 +177,10 @@ if btn_cadastrar:
             linha_atual = prox_linha + i
             if aba_dest == "ALTA":
                 status_item = status_selecionado if item in s_nums else "PEDIDO"
-                # FÓRMULA: =IF(C{linha}=""; ""; TODAY()-C{linha}) -> Compara com a Coluna C (Data)
                 formula_dias = f'=IF(C{linha_atual}=""; ""; TODAY()-C{linha_atual})'
-                # Estrutura: A:Vazio | B:Dias | C:Data | D:Unidade | E:Carro | F:Item | G:Valor | H:Fornecedor | I:Status
-                novas_linhas.append([formula_dias, dt_str, unidade, carro, item, valor, fornecedor, status_item])
+                # [A:Vazio, B:Dias, C:Data, D:Unidade, E:Carro, F:Item, G:Valor, H:Fornecedor, I:Status]
+                novas_linhas.append(["", formula_dias, dt_str, unidade, carro, item, valor, fornecedor, status_item])
             else:
-                # EMERGENCIAL: Mantém o layout original
                 novas_linhas.append([unidade, datetime.now().strftime("%d/%m/%Y %H:%M:%S"), carro, item, valor, fornecedor, "", "", "", ""])
 
         ws.append_rows(novas_linhas, value_input_option='USER_ENTERED')
@@ -166,16 +188,28 @@ if btn_cadastrar:
     
     st.rerun()
 
-# --- EXCLUSÃO MANUAL ---
+# --- FERRAMENTAS ---
 st.markdown("---")
-st.subheader("🗑️ Exclusão Manual")
-with st.expander("Ferramentas"):
-    with st.form("form_exclusao", clear_on_submit=True):
-        aba_ex = st.selectbox("Aba", ["ALTA", "EMERGENCIAL"], key="man_aba")
-        txt_ex = st.text_area("Números para excluir")
-        if st.form_submit_button("EXCLUIR"):
-            n_ex = extrair_numeros_da_string(txt_ex)
-            if n_ex:
-                qtd = excluir_por_numero(sh, aba_ex, n_ex)
-                st.session_state.mensagem_sucesso = f"🗑️ {qtd} item(s) removidos."
+st.subheader("🛠️ Ferramentas de Manutenção")
+col_tools1, col_tools2 = st.columns(2)
+
+with col_tools1:
+    with st.expander("🗑️ Exclusão Manual"):
+        with st.form("form_exclusao", clear_on_submit=True):
+            aba_ex = st.selectbox("Aba", ["ALTA", "EMERGENCIAL"], key="man_aba")
+            txt_ex = st.text_area("Números para excluir")
+            if st.form_submit_button("EXCLUIR"):
+                n_ex = extrair_numeros_da_string(txt_ex)
+                if n_ex:
+                    qtd = excluir_por_numero(sh, aba_ex, n_ex)
+                    st.session_state.mensagem_sucesso = f"🗑️ {qtd} item(s) removidos."
+                    st.rerun()
+
+with col_tools2:
+    with st.expander("🧹 Limpeza de Duplicatas"):
+        st.write("Esta ação remove linhas duplicadas dentro das abas, mantendo apenas a primeira entrada de cada número.")
+        if st.button("EXECUTAR LIMPEZA GERAL"):
+            with st.spinner("Limpando duplicatas..."):
+                qtd_limpa = limpar_todas_duplicatas(sh)
+                st.session_state.mensagem_sucesso = f"🧹 Limpeza concluída! {qtd_limpa} linhas duplicadas foram removidas."
                 st.rerun()
