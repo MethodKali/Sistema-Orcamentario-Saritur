@@ -71,57 +71,53 @@ def excluir_por_numero(sh, aba_nome, lista_numeros):
 def limpar_todas_duplicatas(sh):
     total_removido = 0
     hoje = datetime.now().date()
+    detalhes_limpeza = [] # Para armazenar o resumo por aba
     
     for aba_nome in ["ALTA", "EMERGENCIAL"]:
         ws = sh.worksheet(aba_nome)
         dados = ws.get_all_values()
         
-        # Índices de colunas (0-based)
-        # ALTA: Data=C(2), Item=F(5) | EMERGENCIAL: Data=B(1), Item=D(3)
         idx_data = 2 if aba_nome == "ALTA" else 1
         idx_item = 5 if aba_nome == "ALTA" else 3
         
         vistos = set()
         linhas_para_excluir = []
+        removidos_nesta_aba = 0
         
         for i, linha in enumerate(dados):
-            if i < 2: continue # Pula cabeçalhos
+            if i < 2: continue 
             if len(linha) > idx_item:
-                # 1. Validar Data (Ignorar se for anterior a hoje)
+                # 1. Filtro Temporal (Apenas hoje ou futuro)
                 data_str = linha[idx_data]
                 try:
-                    # Tenta converter a data da planilha
                     data_dt = datetime.strptime(data_str, "%d/%m/%Y").date()
-                    if data_dt < hoje:
-                        continue # Pula registros antigos
-                except:
-                    continue # Se a data estiver inválida ou vazia, pula para segurança
+                    if data_dt < hoje: continue 
+                except: continue
 
-                # 2. Validar Número do Pedido/Solicitação
+                # 2. Filtro de Intervalo Numérico
                 raw_num = limpar_apenas_numeros(linha[idx_item])
                 if not raw_num: continue
                 
                 num_int = int(raw_num)
-                
-                # Verifica se está dentro dos intervalos permitidos
                 is_solicitacao = 300000 <= num_int <= 400000
                 is_pedido = 1100000 <= num_int <= 1300000
                 
                 if is_solicitacao or is_pedido:
-                    # 3. Lógica de Duplicata (Apenas para números válidos e atuais)
+                    # 3. Identificação de Duplicata
                     if num_int in vistos:
                         linhas_para_excluir.append(i + 1)
                     else:
                         vistos.add(num_int)
         
         if linhas_para_excluir:
-            # Exclui de baixo para cima
             for idx in sorted(linhas_para_excluir, reverse=True):
                 ws.delete_rows(idx)
-            total_removido += len(linhas_para_excluir)
+            removidos_nesta_aba = len(linhas_para_excluir)
+            total_removido += removidos_nesta_aba
+        
+        detalhes_limpeza.append(f"{aba_nome}: {removidos_nesta_aba}")
             
-    return total_removido
-
+    return total_removido, ", ".join(detalhes_limpeza)
 # --- INÍCIO DO APP ---
 client = get_gspread_client()
 if not client: st.stop()
@@ -229,11 +225,16 @@ with col_tools1:
                     st.session_state.mensagem_sucesso = f"🗑️ {qtd} item(s) removidos."
                     st.rerun()
 
+# --- NO BLOCO DO BOTÃO (DENTRO DA COL_TOOLS2) ---
 with col_tools2:
-    with st.expander("🧹 Limpeza de Duplicatas"):
-        st.write("Esta ação remove linhas duplicadas dentro das abas, mantendo apenas a primeira entrada de cada número.")
+    with st.expander("Sweep 🧹 Limpeza de Duplicatas"):
+        st.write("Foco: Hoje/Futuro | Pedidos (1.1M-1.3M) | Solicit. (300k-400k)")
         if st.button("EXECUTAR LIMPEZA GERAL"):
-            with st.spinner("Limpando duplicatas..."):
-                qtd_limpa = limpar_todas_duplicatas(sh)
-                st.session_state.mensagem_sucesso = f"🧹 Limpeza concluída! {qtd_limpa} linhas duplicadas foram removidas."
+            with st.spinner("Analisando e limpando duplicatas atuais..."):
+                qtd, resumo = limpar_todas_duplicatas(sh)
+                if qtd > 0:
+                    termo = "duplicata removida" if qtd == 1 else "duplicatas removidas"
+                    st.session_state.mensagem_sucesso = f"✅ Sucesso! {qtd} {termo} ({resumo})."
+                else:
+                    st.info("Nenhuma duplicata atual encontrada para os critérios definidos.")
                 st.rerun()
