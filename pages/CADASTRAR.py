@@ -70,28 +70,52 @@ def excluir_por_numero(sh, aba_nome, lista_numeros):
 # --- NOVA LÓGICA: LIMPEZA DE DUPLICATAS AUTOMÁTICA ---
 def limpar_todas_duplicatas(sh):
     total_removido = 0
-    # Processamos ambas as abas
+    hoje = datetime.now().date()
+    
     for aba_nome in ["ALTA", "EMERGENCIAL"]:
         ws = sh.worksheet(aba_nome)
         dados = ws.get_all_values()
-        col_idx = 5 if aba_nome == "ALTA" else 3 # Índice 0-based: F=5, D=3
+        
+        # Índices de colunas (0-based)
+        # ALTA: Data=C(2), Item=F(5) | EMERGENCIAL: Data=B(1), Item=D(3)
+        idx_data = 2 if aba_nome == "ALTA" else 1
+        idx_item = 5 if aba_nome == "ALTA" else 3
         
         vistos = set()
         linhas_para_excluir = []
         
-        # Percorre de cima para baixo
         for i, linha in enumerate(dados):
             if i < 2: continue # Pula cabeçalhos
-            if len(linha) > col_idx:
-                num = limpar_apenas_numeros(linha[col_idx])
-                if num:
-                    if num in vistos:
+            if len(linha) > idx_item:
+                # 1. Validar Data (Ignorar se for anterior a hoje)
+                data_str = linha[idx_data]
+                try:
+                    # Tenta converter a data da planilha
+                    data_dt = datetime.strptime(data_str, "%d/%m/%Y").date()
+                    if data_dt < hoje:
+                        continue # Pula registros antigos
+                except:
+                    continue # Se a data estiver inválida ou vazia, pula para segurança
+
+                # 2. Validar Número do Pedido/Solicitação
+                raw_num = limpar_apenas_numeros(linha[idx_item])
+                if not raw_num: continue
+                
+                num_int = int(raw_num)
+                
+                # Verifica se está dentro dos intervalos permitidos
+                is_solicitacao = 300000 <= num_int <= 400000
+                is_pedido = 1100000 <= num_int <= 1300000
+                
+                if is_solicitacao or is_pedido:
+                    # 3. Lógica de Duplicata (Apenas para números válidos e atuais)
+                    if num_int in vistos:
                         linhas_para_excluir.append(i + 1)
                     else:
-                        vistos.add(num)
+                        vistos.add(num_int)
         
         if linhas_para_excluir:
-            # Exclui de baixo para cima para não perder a referência do índice
+            # Exclui de baixo para cima
             for idx in sorted(linhas_para_excluir, reverse=True):
                 ws.delete_rows(idx)
             total_removido += len(linhas_para_excluir)
