@@ -7,5 +7,4 @@ gspread
 oauth2client
 pytz
 xlsxwriter
-pymssql 
 pyodbc
