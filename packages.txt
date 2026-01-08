@@ -1,2 +1,0 @@
-freetds-dev
-freetds-bin
