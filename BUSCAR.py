@@ -60,8 +60,21 @@ def load_sheets(today_str):
         try:
             data = sh.worksheet(sheet_name).get_all_values()
             if len(data) < 2: return pd.DataFrame()
-            headers = [h.strip().upper() for h in data[1]]
-            df = pd.DataFrame(data[2:], columns=headers)
+            
+            # NORMALIZAÇÃO DE CABEÇALHOS (Resolve InvalidIndexError)
+            raw_headers = [h.strip().upper() for h in data[1]]
+            final_headers = []
+            counts = {}
+            for h in raw_headers:
+                name = h if h else "VAZIO"
+                if name in counts:
+                    counts[name] += 1
+                    final_headers.append(f"{name}_{counts[name]}")
+                else:
+                    counts[name] = 0
+                    final_headers.append(name)
+            
+            df = pd.DataFrame(data[2:], columns=final_headers)
             return safe_load(df)
         except: return pd.DataFrame()
 
@@ -87,7 +100,8 @@ start_date = st.sidebar.date_input("Início", date.today() - timedelta(days=30))
 end_date = st.sidebar.date_input("Fim", date.today())
 
 total_alta = df_alta[(df_alta[COL_DATA] >= pd.to_datetime(start_date)) & (df_alta[COL_DATA] <= pd.to_datetime(end_date))][COL_VALOR].sum()
-total_emerg_combinado = pd.concat([df_emerg, df_geral_emerg])
+# Concatenação segura na sidebar
+total_emerg_combinado = pd.concat([df_emerg, df_geral_emerg], ignore_index=True)
 total_emerg = total_emerg_combinado[(total_emerg_combinado[COL_DATA] >= pd.to_datetime(start_date)) & (total_emerg_combinado[COL_DATA] <= pd.to_datetime(end_date))][COL_VALOR].sum()
 
 st.sidebar.success(f"ALTA: {br_money(total_alta)}")
@@ -126,28 +140,31 @@ data_busca = st.date_input("Selecione a data:", value=today_date_tz)
 if data_busca:
     dt = pd.to_datetime(data_busca).normalize()
     alta_f = df_alta[df_alta[COL_DATA] == dt]
-    emerg_f = pd.concat([df_emerg, df_geral_emerg])
+    # Concatenação segura para emergencial diário
+    emerg_f = pd.concat([df_emerg, df_geral_emerg], ignore_index=True)
     emerg_f = emerg_f[emerg_f[COL_DATA] == dt]
     
     c1, c2 = st.columns(2)
     c1.metric("ALTA", br_money(alta_f[COL_VALOR].sum()), delta="Limite 180k" if alta_f[COL_VALOR].sum() > 180000 else None)
     c2.metric("EMERGENCIAL", br_money(emerg_f[COL_VALOR].sum()), delta="Limite 15k" if emerg_f[COL_VALOR].sum() > 15000 else None)
 
-    # Re-inserindo os Gráficos Altair
     for df_graf, titulo, cor in [(alta_f, "🟦 Top 10 ALTA", "blue"), (emerg_f, "🟥 Top 10 EMERGENCIAL", "red")]:
         if not df_graf.empty:
             st.write(f"### {titulo}")
             top = df_graf.sort_values(by=COL_VALOR, ascending=False).head(10).copy()
             top['VALOR_TEXTO'] = top[COL_VALOR].apply(br_money)
+            
             chart = alt.Chart(top).mark_bar(color=cor).encode(
-                x=alt.X(COL_VALOR, axis=None), y=alt.Y(COL_PEDIDO, sort='-x'), text='VALOR_TEXTO'
+                x=alt.X(COL_VALOR, axis=None), 
+                y=alt.Y(COL_PEDIDO, sort='-x', title="Pedido"),
+                tooltip=[COL_PEDIDO, 'VALOR_TEXTO']
             )
             text = chart.mark_text(align='left', dx=5).encode(text='VALOR_TEXTO')
             st.altair_chart((chart + text).properties(height=300), use_container_width=True)
             st.dataframe(df_graf[[COL_PEDIDO, COL_VALOR, COL_STATUS, COL_UNIDADE, COL_CARRO]], hide_index=True)
 
     # Gasto por Unidade
-    df_comb = pd.concat([alta_f, emerg_f])
+    df_comb = pd.concat([alta_f, emerg_f], ignore_index=True)
     if not df_comb.empty:
         st.write("### 🏢 Gasto por Unidade (Status: PEDIDO)")
         df_p = df_comb[df_comb[COL_STATUS].astype(str).str.upper() == "PEDIDO"]
