@@ -61,7 +61,6 @@ def load_sheets(today_str):
             data = sh.worksheet(sheet_name).get_all_values()
             if len(data) < 2: return pd.DataFrame()
             
-            # NORMALIZAÇÃO DE CABEÇALHOS (Resolve InvalidIndexError)
             raw_headers = [h.strip().upper() for h in data[1]]
             final_headers = []
             counts = {}
@@ -79,6 +78,17 @@ def load_sheets(today_str):
         except: return pd.DataFrame()
 
     return load_sheet_as_df("ALTA"), load_sheet_as_df("EMERGENCIAL"), load_sheet_as_df(calculate_backup_sheet_name()), load_sheet_as_df("GERAL_EMERGENCIAL")
+
+def show_result(row, sheet_name):
+    """Apresentação clássica vertical das informações do pedido."""
+    st.write(f"📁 **Origem:** {sheet_name}") 
+    st.write(f"📅 **Previsão de pagamento:** {row.get(COL_DATA).strftime('%d/%m/%Y') if pd.notna(row.get(COL_DATA)) else 'N/A'}") 
+    st.write(f"📌 **Status:** {row.get(COL_STATUS)}")
+    st.write(f"💰 **Valor:** {br_money(row.get(COL_VALOR))}")
+    st.write(f"🏢 **Unidade solicitante:** {row.get(COL_UNIDADE)}")
+    st.write(f"🚌 **Carro/Utilização:** {row.get(COL_CARRO)}")
+    st.write(f"📦 **Fornecedor:** {row.get(COL_FORNECEDOR)}")
+    st.write("---")
 
 # --- INÍCIO DO APP ---
 SAO_PAULO_TZ = pytz.timezone('America/Sao_Paulo')
@@ -100,7 +110,6 @@ start_date = st.sidebar.date_input("Início", date.today() - timedelta(days=30))
 end_date = st.sidebar.date_input("Fim", date.today())
 
 total_alta = df_alta[(df_alta[COL_DATA] >= pd.to_datetime(start_date)) & (df_alta[COL_DATA] <= pd.to_datetime(end_date))][COL_VALOR].sum()
-# Concatenação segura na sidebar
 total_emerg_combinado = pd.concat([df_emerg, df_geral_emerg], ignore_index=True)
 total_emerg = total_emerg_combinado[(total_emerg_combinado[COL_DATA] >= pd.to_datetime(start_date)) & (total_emerg_combinado[COL_DATA] <= pd.to_datetime(end_date))][COL_VALOR].sum()
 
@@ -114,20 +123,31 @@ st.info(f"Bases: ALTA, EMERGENCIAL, GERAL_EMERGENCIAL e BACKUP ({BACKUP_NAME})")
 
 st.subheader("🔍 Situação da Solicitação/Pedido")
 current_key = f"input_{st.session_state.input_reset_counter}"
-pedido_input = st.text_input("Número do pedido:", key=current_key)
+pedido_input = st.text_input("Digite o número do pedido:", key=current_key)
 
 if pedido_input:
     pid = pedido_input.strip().upper()
     found = False
-    for df, label, color in [(df_alta, "ALTA", "blue"), (df_emerg, "EMERGENCIAL", "red"), (df_geral_emerg, "GERAL_EMERGENCIAL", "orange"), (df_backup, f"BACKUP {BACKUP_NAME}", "gray")]:
-        res = df[df[COL_PEDIDO].astype(str).str.strip().str.upper() == pid] if not df.empty and COL_PEDIDO in df.columns else pd.DataFrame()
-        if not res.empty:
-            st.success(f"Pedido encontrado em: {label}")
-            row = res.iloc[0]
-            st.write(f"📅 **Data:** {row[COL_DATA].strftime('%d/%m/%Y')} | 📌 **Status:** {row[COL_STATUS]} | 💰 **Valor:** {br_money(row[COL_VALOR])}")
-            st.write(f"🚌 **Carro:** {row[COL_CARRO]} | 📦 **Fornecedor:** {row[COL_FORNECEDOR]}")
-            found = True
-    if not found: st.warning("Pedido não encontrado.")
+    
+    # Lista de bases para iteração de busca
+    bases_busca = [
+        (df_alta, "ALTA"), 
+        (df_emerg, "EMERGENCIAL"), 
+        (df_geral_emerg, "GERAL_EMERGENCIAL"), 
+        (df_backup, f"BACKUP {BACKUP_NAME}")
+    ]
+    
+    for df, label in bases_busca:
+        if not df.empty and COL_PEDIDO in df.columns:
+            res = df[df[COL_PEDIDO].astype(str).str.strip().str.upper() == pid]
+            if not res.empty:
+                st.success(f"✅ Pedido encontrado na aba {label}")
+                show_result(res.iloc[0], label)
+                found = True
+    
+    if not found:
+        st.warning(f"❌ Pedido '{pedido_input}' não encontrado em nenhuma aba.")
+        
     if st.button("Limpar Busca"):
         st.session_state.input_reset_counter += 1
         st.rerun()
@@ -139,10 +159,9 @@ data_busca = st.date_input("Selecione a data:", value=today_date_tz)
 
 if data_busca:
     dt = pd.to_datetime(data_busca).normalize()
-    alta_f = df_alta[df_alta[COL_DATA] == dt]
-    # Concatenação segura para emergencial diário
+    alta_f = df_alta[df_alta[COL_DATA] == dt] if not df_alta.empty else pd.DataFrame()
     emerg_f = pd.concat([df_emerg, df_geral_emerg], ignore_index=True)
-    emerg_f = emerg_f[emerg_f[COL_DATA] == dt]
+    emerg_f = emerg_f[emerg_f[COL_DATA] == dt] if not emerg_f.empty else pd.DataFrame()
     
     c1, c2 = st.columns(2)
     c1.metric("ALTA", br_money(alta_f[COL_VALOR].sum()), delta="Limite 180k" if alta_f[COL_VALOR].sum() > 180000 else None)
