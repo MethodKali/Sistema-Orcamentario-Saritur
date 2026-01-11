@@ -171,8 +171,13 @@ def display_search_history():
         column_order = ['Pedido', 'Origem', 'Data', 'Carro Planilha', 'Status']
         st.markdown(f"### 🚗 CRITÉRIO: {carro_foco}")
         st.dataframe(df_display[column_order].style.apply(apply_text_color_by_status, axis=1), use_container_width=True, hide_index=True)
-        st.markdown("---")
-
+        st.mark
+        
+def processar_e_limpar(data_frames):
+    """Callback para processar a busca e limpar o campo de texto com segurança."""
+    handle_search(data_frames)
+    # Limpa o valor no session_state de forma que o widget reconheça no próximo ciclo
+    st.session_state["backlog_input_text"] = ""
 # ----------------------------------------------------
 # 4. FUNÇÃO PRINCIPAL (APP)
 # ----------------------------------------------------
@@ -199,13 +204,15 @@ def app():
     
     with col2:
         st.selectbox("Critério de Carro:", options=LISTA_CARROS_CADASTRO, key='carro_select')
-        # Botão com lógica de limpeza segura
-        if st.button("BUSCAR DADOS", type="primary", use_container_width=True):
-            handle_search(data_frames)
-            # Limpamos o estado do texto de forma segura antes do rerun
-            st.session_state.backlog_input_text = ""
-            st.rerun()
-    
+        
+        # Usamos o parâmetro on_click para processar e limpar antes da renderização
+        st.button(
+            "BUSCAR DADOS", 
+            type="primary", 
+            use_container_width=True,
+            on_click=processar_e_limpar,
+            args=(data_frames,)
+        )
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
