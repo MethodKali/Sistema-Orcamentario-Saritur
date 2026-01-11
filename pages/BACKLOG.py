@@ -1,12 +1,8 @@
-# BACKLOG.py
 import streamlit as st
 import re
 import pandas as pd
 import gspread 
 from typing import List, Dict, Union
-from datetime import date, timedelta
-import calendar 
-import json 
 from oauth2client.service_account import ServiceAccountCredentials
 import os 
 
@@ -15,8 +11,8 @@ PLANILHA_NOME = "Controle Orçamentário Diário V2"
 COLUNAS_DADOS = ['PEDIDO', 'DATA', 'CARRO | UTILIZAÇÃO', 'STATUS']
 COLUNA_CARRO = 'CARRO | UTILIZAÇÃO' 
 
-# LISTA DAS ABAS A SEREM CARREGADAS
-ABAS_PRINCIPAIS = ['ALTA', 'EMERGENCIAL']
+# LISTA DAS ABAS A SEREM CARREGADAS - Agora todas são fixas
+ABAS_A_BUSCAR = ['ALTA', 'EMERGENCIAL', 'GERAL_EMERGENCIAL']
 
 # DEFINIÇÃO DO SCOPE DE PERMISSÃO
 GOOGLE_SHEET_SCOPES = [
@@ -33,7 +29,7 @@ LISTA_CARROS_CADASTRO = [
 ]
 
 # ----------------------------------------------------
-# 1. FUNÇÕES DE UTILIDADE E CÁLCULO DE DATA (CORRIGIDO)
+# 1. FUNÇÕES DE UTILIDADE
 # ----------------------------------------------------
 
 def parse_pedidos(text: str) -> List[str]:
@@ -49,31 +45,12 @@ def parse_pedidos(text: str) -> List[str]:
     return sorted(list(pedidos_limpos))
 
 
-def calculate_backup_sheet_name() -> str:
-    """
-    Calcula o nome da aba da semana passada completa (Segunda a Sexta).
-    Lógica idêntica ao arquivo principal para manter sincronia.
-    """
-    today = date.today()
-    # Encontra a segunda-feira da semana anterior à atual
-    monday_last_week = today - timedelta(days=today.weekday() + 7)
-    # Encontra a sexta-feira daquela mesma semana
-    friday_last_week = monday_last_week + timedelta(days=4)
-    
-    return f"{monday_last_week.strftime('%d.%m')} a {friday_last_week.strftime('%d.%m')}"
-
-
-@st.cache_data
+@st.cache_data(ttl=600) # Cache de 10 minutos para não sobrecarregar a API
 def load_data(sheet_name: str) -> Dict[str, pd.DataFrame]:
     """
-    Conecta ao Google Sheets e carrega os dados das abas ALTA, EMERGENCIAL,
-    e a aba de Backup calculada dinamicamente.
+    Conecta ao Google Sheets e carrega os dados das abas ALTA, EMERGENCIAL e GERAL_EMERGENCIAL.
     """
     data = {}
-    
-    # 1. Calcula o nome da aba de backup
-    BACKUP_SHEET_NAME = calculate_backup_sheet_name()
-    ABAS_A_BUSCAR = ABAS_PRINCIPAIS + [BACKUP_SHEET_NAME]
     
     try:
         creds_json = st.secrets.get("google_sheets_service_account")
@@ -99,35 +76,33 @@ def load_data(sheet_name: str) -> Dict[str, pd.DataFrame]:
                 if len(list_of_lists) < 2:
                     continue
 
+                # Pega o cabeçalho da linha 2 (índice 1)
                 header = [h.strip().upper() for h in list_of_lists[1]]
                 data_rows = list_of_lists[2:] 
                 df = pd.DataFrame(data_rows, columns=header)
                 
-                # Normaliza nomes de colunas para busca
+                # Normaliza nomes de colunas
                 df.columns = [c.strip().upper() for c in df.columns]
                 
-                df['PEDIDO'] = df['PEDIDO'].astype(str).str.strip()
+                # Garante que a coluna PEDIDO seja string para comparação
+                if 'PEDIDO' in df.columns:
+                    df['PEDIDO'] = df['PEDIDO'].astype(str).str.strip()
+                
                 data[tab] = df
                 
             except gspread.WorksheetNotFound: 
-                if tab == BACKUP_SHEET_NAME:
-                    st.warning(f"Aviso: Aba de Backup '{BACKUP_SHEET_NAME}' não encontrada.")
-                    continue
-                st.error(f"Erro: Aba '{tab}' não encontrada.")
-                return None
-        
-        if BACKUP_SHEET_NAME not in LISTA_CARROS_CADASTRO:
-             LISTA_CARROS_CADASTRO.insert(1, BACKUP_SHEET_NAME) 
+                st.error(f"Erro: Aba '{tab}' não encontrada na planilha.")
+                continue
         
         return data
         
     except Exception as e:
-        st.error(f"Ocorreu um erro inesperado: {e}")
+        st.error(f"Ocorreu um erro inesperado ao abrir a planilha: {e}")
         return None
 
 
 # ----------------------------------------------------
-# 2. FUNÇÕES DE BUSCA E CONTROLE DE ESTADO (MANTIDAS)
+# 2. FUNÇÕES DE BUSCA E CONTROLE DE ESTADO
 # ----------------------------------------------------
 
 def initialize_state():
@@ -143,13 +118,18 @@ def search_pedido(pedido: str, data: Dict[str, pd.DataFrame], carro_selecionado:
         "Status": "Pedido Não Encontrado", "Carro Foco": carro_selecionado
     }
     
+    # Busca o pedido em cada uma das abas carregadas (ALTA, EMERGENCIAL, GERAL_EMERGENCIAL)
     for sheet_name, df in data.items():
+        if 'PEDIDO' not in df.columns: continue
+        
         match = df[df['PEDIDO'] == pedido]
         if not match.empty:
             row = match.iloc[0]
             found_data.update({
-                "Origem": sheet_name, "Data": row.get('DATA', ''), 
-                COLUNA_CARRO: row.get(COLUNA_CARRO, ''), "Status": row.get('STATUS', '')
+                "Origem": sheet_name, 
+                "Data": row.get('DATA', ''), 
+                COLUNA_CARRO: row.get(COLUNA_CARRO, ''), 
+                "Status": row.get('STATUS', '')
             })
             return found_data
     return found_data
@@ -173,13 +153,11 @@ def handle_search(data_frames: Dict[str, pd.DataFrame]):
     parsed_pedidos = parse_pedidos(input_text)
     
     if carro_selecionado == LISTA_CARROS_CADASTRO[0]:
-        st.session_state['feedback_message'] = "ERRO: Selecione um critério."
-        st.rerun()
+        st.session_state['feedback_message'] = "⚠️ ERRO: Selecione um critério de carro."
         return
 
     if not parsed_pedidos:
-        st.session_state['feedback_message'] = "ERRO: Nenhum pedido válido."
-        st.rerun()
+        st.session_state['feedback_message'] = "⚠️ ERRO: Nenhum número de pedido válido identificado."
         return 
         
     search_results = perform_search(parsed_pedidos, data_frames, carro_selecionado)
@@ -200,25 +178,22 @@ def handle_search(data_frames: Dict[str, pd.DataFrame]):
             new_history.append(new_df)
 
         st.session_state['search_history'] = new_history
-        st.session_state['feedback_message'] = f"✅ Tabela '{carro_selecionado}' processada."
+        st.session_state['feedback_message'] = f"✅ Critério '{carro_selecionado}' atualizado."
         
     st.session_state.backlog_input_text = ""
-    st.rerun()
 
 
 def remove_last_search():
     if st.session_state['search_history']:
         st.session_state['search_history'].pop()
-    st.rerun()
 
 
 def clear_search_history():
     st.session_state['search_history'] = []
-    st.rerun()
 
 
 # ----------------------------------------------------
-# 3. FUNÇÕES DE ESTILO E EXIBIÇÃO (MANTIDAS)
+# 3. FUNÇÕES DE ESTILO E EXIBIÇÃO
 # ----------------------------------------------------
 
 def apply_text_color_by_status(row):
@@ -226,16 +201,16 @@ def apply_text_color_by_status(row):
     is_error = row['Status'] == "Pedido Não Encontrado"
     for col in row.index:
         if is_error:
-            style_list.append('color: red; font-weight: bold;' if col in ['Pedido', 'Status'] else 'color: grey;') 
+            style_list.append('color: #FF4B4B; font-weight: bold;' if col in ['Pedido', 'Status'] else 'color: #808495;') 
         else:
-            style_list.append('color: green; font-weight: bold;' if col in ['Pedido', 'Status'] else None)
+            style_list.append('color: #008000; font-weight: bold;' if col in ['Pedido', 'Status'] else None)
     return style_list
 
 
 def display_search_history():
     history = st.session_state['search_history']
     if not history:
-        st.info("Histórico vazio.")
+        st.info("Nenhuma busca realizada no momento.")
         return
 
     for df in history:
@@ -257,35 +232,42 @@ def display_search_history():
 
 def app():
     initialize_state()
-    st.title("🔍 BACKLOG: Pesquisa Rápida de Pedidos")
+    st.title("🔍 Pesquisa em Backlog e Geral")
 
-    try:
-        BACKUP_SHEET_NAME = calculate_backup_sheet_name()
-        st.info(f"Aba de Backup sendo rastreada: **{BACKUP_SHEET_NAME}**")
-    except Exception:
-        pass 
-        
     if st.session_state.get('feedback_message'):
-        st.write(st.session_state['feedback_message'])
+        if "✅" in st.session_state['feedback_message']:
+            st.success(st.session_state['feedback_message'])
+        else:
+            st.error(st.session_state['feedback_message'])
         st.session_state['feedback_message'] = None 
 
-    with st.spinner("Carregando dados..."):
+    with st.spinner("Conectando ao banco de dados da planilha..."):
         data_frames = load_data(PLANILHA_NOME)
     
-    if data_frames is None: st.stop()
+    if data_frames is None: 
+        st.error("Não foi possível carregar as abas da planilha. Verifique se as abas ALTA, EMERGENCIAL e GERAL_EMERGENCIAL existem.")
+        st.stop()
     
     col1, col2 = st.columns([0.6, 0.4])
     with col1:
-        st.text_area("Cole os pedidos:", height=100, key='backlog_input_text')
+        st.text_area("Cole o bloco de texto contendo os pedidos:", height=120, key='backlog_input_text')
     
     with col2:
-        st.selectbox("Selecione o Critério:", options=LISTA_CARROS_CADASTRO, key='carro_select')
-        st.button("BUSCAR INFORMAÇÕES", type="primary", use_container_width=True, on_click=handle_search, args=(data_frames,))
+        st.selectbox("Critério de Carro:", options=LISTA_CARROS_CADASTRO, key='carro_select')
+        if st.button("BUSCAR DADOS", type="primary", use_container_width=True):
+            handle_search(data_frames)
+            st.rerun()
     
     st.divider()
     c1, c2 = st.columns(2)
-    c1.button("⬅️ REMOVER ÚLTIMA", use_container_width=True, on_click=remove_last_search)
-    c2.button("❌ LIMPAR TUDO", use_container_width=True, on_click=clear_search_history)
+    with c1:
+        if st.button("⬅️ REMOVER ÚLTIMA BUSCA", use_container_width=True):
+            remove_last_search()
+            st.rerun()
+    with c2:
+        if st.button("❌ LIMPAR TODO HISTÓRICO", use_container_width=True):
+            clear_search_history()
+            st.rerun()
     
     display_search_history()
 

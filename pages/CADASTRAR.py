@@ -166,7 +166,7 @@ if btn_cadastrar:
     
     st.rerun()
 
-# --- EXCLUSÃO MANUAL ---
+
 st.markdown("---")
 st.subheader("🗑️ Exclusão Manual")
 with st.expander("Ferramentas"):
