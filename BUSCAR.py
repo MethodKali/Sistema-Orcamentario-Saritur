@@ -182,12 +182,35 @@ if data_busca:
             st.altair_chart((chart + text).properties(height=300), use_container_width=True)
             st.dataframe(df_graf[[COL_PEDIDO, COL_VALOR, COL_STATUS, COL_UNIDADE, COL_CARRO]], hide_index=True)
 
-    # Gasto por Unidade
+# --- BLOCO DE GASTO POR UNIDADE (ESTRUTURADO) ---
     df_comb = pd.concat([alta_f, emerg_f], ignore_index=True)
     if not df_comb.empty:
-        st.write("### 🏢 Gasto por Unidade (Status: PEDIDO)")
-        df_p = df_comb[df_comb[COL_STATUS].astype(str).str.upper() == "PEDIDO"]
+        st.write("---")
+        st.subheader(f"🏢 Gasto por Unidade (Status: PEDIDO)")
+        
+        # Filtra apenas status PEDIDO
+        df_p = df_comb[df_comb[COL_STATUS].astype(str).str.strip().str.upper() == "PEDIDO"].copy()
+        
         if not df_p.empty:
+            # Limpeza para evitar duplicatas (remove espaços e padroniza acentos se necessário)
+            df_p[COL_UNIDADE] = df_p[COL_UNIDADE].astype(str).str.strip().str.upper()
+            
+            # Agrupa e soma
             gastos = df_p.groupby(COL_UNIDADE)[COL_VALOR].sum().sort_values(ascending=False).reset_index()
-            for _, r in gastos.iterrows():
-                st.markdown(f"**{r[COL_UNIDADE]}:** {br_money(r[COL_VALOR])}")
+            
+            # Formata o valor para exibição na tabela
+            gastos_show = gastos.copy()
+            gastos_show[COL_VALOR] = gastos_show[COL_VALOR].apply(br_money)
+            
+            # Exibição em formato de tabela estruturada (estilo anterior)
+            st.table(gastos_show) 
+            
+            # Caso prefira o visual de "lista de cards" que usávamos antes, use este HTML:
+            # for _, r in gastos.iterrows():
+            #     st.markdown(
+            #         f"""<div style="display: flex; justify-content: space-between; border-bottom: 1px solid #444; padding: 5px 0;">
+            #             <span style="font-weight: bold;">{r[COL_UNIDADE]}</span>
+            #             <span>{br_money(r[COL_VALOR])}</span>
+            #         </div>""", unsafe_allow_html=True)
+        else:
+            st.info("Nenhum gasto com status 'PEDIDO' para esta data.")
