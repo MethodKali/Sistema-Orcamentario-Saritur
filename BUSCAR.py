@@ -181,36 +181,34 @@ if data_busca:
             text = chart.mark_text(align='left', dx=5).encode(text='VALOR_TEXTO')
             st.altair_chart((chart + text).properties(height=300), use_container_width=True)
             st.dataframe(df_graf[[COL_PEDIDO, COL_VALOR, COL_STATUS, COL_UNIDADE, COL_CARRO]], hide_index=True)
-
-# --- BLOCO DE GASTO POR UNIDADE (ESTRUTURADO) ---
+# --- BLOCO DE GASTO POR UNIDADE (FORMATO TABELA ESTRUTURADA) ---
     df_comb = pd.concat([alta_f, emerg_f], ignore_index=True)
     if not df_comb.empty:
         st.write("---")
         st.subheader(f"🏢 Gasto por Unidade (Status: PEDIDO)")
         
-        # Filtra apenas status PEDIDO
+        # 1. Filtra apenas status PEDIDO
         df_p = df_comb[df_comb[COL_STATUS].astype(str).str.strip().str.upper() == "PEDIDO"].copy()
         
         if not df_p.empty:
-            # Limpeza para evitar duplicatas (remove espaços e padroniza acentos se necessário)
+            # 2. PADRONIZAÇÃO: Remove acentos e espaços para agrupar corretamente
+            # Isso evita que "INDÚSTRIA" e "INDUSTRIA" apareçam separados
             df_p[COL_UNIDADE] = df_p[COL_UNIDADE].astype(str).str.strip().str.upper()
+            df_p[COL_UNIDADE] = df_p[COL_UNIDADE].str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8')
             
-            # Agrupa e soma
+            # 3. Agrupa e soma os valores
             gastos = df_p.groupby(COL_UNIDADE)[COL_VALOR].sum().sort_values(ascending=False).reset_index()
             
-            # Formata o valor para exibição na tabela
-            gastos_show = gastos.copy()
-            gastos_show[COL_VALOR] = gastos_show[COL_VALOR].apply(br_money)
+            # 4. Formata os números para o padrão brasileiro de moeda
+            gastos_tabela = gastos.copy()
+            gastos_tabela.columns = ["UNIDADE", "TOTAL (R$)"]
+            gastos_tabela["TOTAL (R$)"] = gastos_tabela["TOTAL (R$)"].apply(br_money)
             
-            # Exibição em formato de tabela estruturada (estilo anterior)
-            st.table(gastos_show) 
-            
-            # Caso prefira o visual de "lista de cards" que usávamos antes, use este HTML:
-            # for _, r in gastos.iterrows():
-            #     st.markdown(
-            #         f"""<div style="display: flex; justify-content: space-between; border-bottom: 1px solid #444; padding: 5px 0;">
-            #             <span style="font-weight: bold;">{r[COL_UNIDADE]}</span>
-            #             <span>{br_money(r[COL_VALOR])}</span>
-            #         </div>""", unsafe_allow_html=True)
+            # 5. EXIBIÇÃO: st.dataframe com use_container_width cria o visual de tabela do sistema
+            st.dataframe(
+                gastos_tabela, 
+                hide_index=True, 
+                use_container_width=True
+            )
         else:
-            st.info("Nenhum gasto com status 'PEDIDO' para esta data.")
+            st.info("Nenhum gasto com status 'PEDIDO' encontrado para esta data.")
