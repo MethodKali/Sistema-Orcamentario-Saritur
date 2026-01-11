@@ -82,6 +82,8 @@ def initialize_state():
         st.session_state['search_history'] = []
     if 'feedback_message' not in st.session_state:
         st.session_state['feedback_message'] = None
+    if 'input_reset_counter' not in st.session_state:
+        st.session_state.input_reset_counter = 0
 
 def search_pedido(pedido: str, data: Dict[str, pd.DataFrame], carro_selecionado: str) -> Dict[str, str]:
     found_data = {
@@ -104,10 +106,8 @@ def perform_search(pedidos: List[str], data: Dict[str, pd.DataFrame], carro_sele
     if not pedidos or data is None: return []
     return [search_pedido(p, data, carro_selecionado) for p in pedidos]
 
-def handle_search(data_frames: Dict[str, pd.DataFrame]):
-    # Pega o valor dos widgets via session_state
-    input_text = st.session_state.backlog_input_text
-    carro_selecionado = st.session_state.carro_select
+def handle_search_logic(input_text, carro_selecionado, data_frames):
+    """Lógica centralizada de busca para evitar conflitos de session_state."""
     parsed_pedidos = parse_pedidos(input_text)
     
     if carro_selecionado == LISTA_CARROS_CADASTRO[0]:
@@ -115,27 +115,28 @@ def handle_search(data_frames: Dict[str, pd.DataFrame]):
         return
 
     if not parsed_pedidos:
-        st.session_state['feedback_message'] = "⚠️ ERRO: Nenhum número de pedido válido identificado."
+        st.session_state['feedback_message'] = "⚠️ ERRO: Nenhum número de pedido válido."
         return 
         
     search_results = perform_search(parsed_pedidos, data_frames, carro_selecionado)
     
     if search_results:
         new_df = pd.DataFrame(search_results)
-        substituted = False
         new_history = []
+        substituted = False
+        
         for existing_df in st.session_state['search_history']:
-            if existing_df['Carro Foco'].iloc[0] == carro_selecionado:
+            if not existing_df.empty and existing_df['Carro Foco'].iloc[0] == carro_selecionado:
                 new_history.append(new_df)
                 substituted = True
             else:
                 new_history.append(existing_df)
+        
         if not substituted:
             new_history.append(new_df)
+            
         st.session_state['search_history'] = new_history
         st.session_state['feedback_message'] = f"✅ Critério '{carro_selecionado}' atualizado."
-    
-    # A limpeza do campo agora é feita via callback ou reset no app() para evitar o erro de API
 
 def remove_last_search():
     if st.session_state['search_history']:
@@ -159,25 +160,26 @@ def apply_text_color_by_status(row):
     return style_list
 
 def display_search_history():
-    history = st.session_state['search_history']
+    history = st.session_state.get('search_history', [])
     if not history:
         st.info("Nenhuma busca realizada no momento.")
         return
+    
     for df in history:
-        carro_foco = df['Carro Foco'].iloc[0]
-        df['Sort_Key'] = df['Status'].apply(lambda x: 1 if x == "Pedido Não Encontrado" else 0)
-        df_sorted = df.sort_values(by='Sort_Key').drop(columns=['Sort_Key'])
-        df_display = df_sorted.rename(columns={COLUNA_CARRO: 'Carro Planilha'}).drop(columns=['Carro Foco'])
-        column_order = ['Pedido', 'Origem', 'Data', 'Carro Planilha', 'Status']
-        st.markdown(f"### 🚗 CRITÉRIO: {carro_foco}")
-        st.dataframe(df_display[column_order].style.apply(apply_text_color_by_status, axis=1), use_container_width=True, hide_index=True)
-        st.mark
-        
-def processar_e_limpar(data_frames):
-    """Callback para processar a busca e limpar o campo de texto com segurança."""
-    handle_search(data_frames)
-    # Limpa o valor no session_state de forma que o widget reconheça no próximo ciclo
-    st.session_state["backlog_input_text"] = ""
+        if df is not None and not df.empty:
+            carro_foco = df['Carro Foco'].iloc[0]
+            temp_df = df.copy()
+            temp_df['Sort_Key'] = temp_df['Status'].apply(lambda x: 1 if x == "Pedido Não Encontrado" else 0)
+            df_sorted = temp_df.sort_values(by='Sort_Key').drop(columns=['Sort_Key'])
+            
+            df_display = df_sorted.rename(columns={COLUNA_CARRO: 'Carro Planilha'}).drop(columns=['Carro Foco'])
+            column_order = ['Pedido', 'Origem', 'Data', 'Carro Planilha', 'Status']
+            cols_to_show = [c for c in column_order if c in df_display.columns]
+            
+            st.markdown(f"### 🚗 CRITÉRIO: {carro_foco}")
+            st.dataframe(df_display[cols_to_show].style.apply(apply_text_color_by_status, axis=1), use_container_width=True, hide_index=True)
+            st.markdown("---")
+
 # ----------------------------------------------------
 # 4. FUNÇÃO PRINCIPAL (APP)
 # ----------------------------------------------------
@@ -193,26 +195,33 @@ def app():
             st.error(st.session_state['feedback_message'])
         st.session_state['feedback_message'] = None 
 
-    with st.spinner("Conectando ao banco de dados da planilha..."):
+    with st.spinner("Conectando ao banco de dados..."):
         data_frames = load_data(PLANILHA_NOME)
     
     if data_frames is None: st.stop()
     
+    # Geramos uma key única para o campo de texto baseada no contador de reset
+    current_key = f"input_text_{st.session_state.input_reset_counter}"
+    
     col1, col2 = st.columns([0.6, 0.4])
     with col1:
-        st.text_area("Cole o bloco de texto contendo os pedidos:", height=120, key='backlog_input_text')
+        st.text_area("Cole o bloco de texto contendo os pedidos:", height=120, key=current_key)
     
     with col2:
         st.selectbox("Critério de Carro:", options=LISTA_CARROS_CADASTRO, key='carro_select')
         
-        # Usamos o parâmetro on_click para processar e limpar antes da renderização
-        st.button(
-            "BUSCAR DADOS", 
-            type="primary", 
-            use_container_width=True,
-            on_click=processar_e_limpar,
-            args=(data_frames,)
-        )
+        if st.button("BUSCAR DADOS", type="primary", use_container_width=True):
+            # 1. Capturamos o texto do widget usando a key dinâmica
+            texto_inserido = st.session_state[current_key]
+            carro_selecionado = st.session_state.carro_select
+            
+            # 2. Processamos a busca
+            handle_search_logic(texto_inserido, carro_selecionado, data_frames)
+            
+            # 3. Incrementamos o contador para mudar a key do widget (isso limpa o campo)
+            st.session_state.input_reset_counter += 1
+            st.rerun()
+
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
