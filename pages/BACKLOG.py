@@ -11,16 +11,13 @@ PLANILHA_NOME = "Controle Orçamentário Diário V2"
 COLUNAS_DADOS = ['PEDIDO', 'DATA', 'CARRO | UTILIZAÇÃO', 'STATUS']
 COLUNA_CARRO = 'CARRO | UTILIZAÇÃO' 
 
-# LISTA DAS ABAS A SEREM CARREGADAS - Agora todas são fixas
 ABAS_A_BUSCAR = ['ALTA', 'EMERGENCIAL', 'GERAL_EMERGENCIAL']
 
-# DEFINIÇÃO DO SCOPE DE PERMISSÃO
 GOOGLE_SHEET_SCOPES = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive",
 ]
 
-# LISTA DOS CARROS CADASTRADOS
 LISTA_CARROS_CADASTRO = [
     "- SELECIONE UM CRITÉRIO -",
     "BACKLOG",
@@ -33,73 +30,48 @@ LISTA_CARROS_CADASTRO = [
 # ----------------------------------------------------
 
 def parse_pedidos(text: str) -> List[str]:
-    """Trata a string de anotação e retorna apenas uma lista de números de pedidos (strings)."""
     if not text:
         return []
-    
     text_cleaned = re.sub(r'[^\d]', ' ', text)
     raw_list = re.split(r'\s+', text_cleaned.strip())
-    
     pedidos_limpos = {p for p in raw_list if p.isdigit() and len(p) > 0}
-    
     return sorted(list(pedidos_limpos))
 
-
-@st.cache_data(ttl=600) # Cache de 10 minutos para não sobrecarregar a API
+@st.cache_data(ttl=600)
 def load_data(sheet_name: str) -> Dict[str, pd.DataFrame]:
-    """
-    Conecta ao Google Sheets e carrega os dados das abas ALTA, EMERGENCIAL e GERAL_EMERGENCIAL.
-    """
     data = {}
-    
     try:
         creds_json = st.secrets.get("google_sheets_service_account")
-        
         if creds_json:
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, GOOGLE_SHEET_SCOPES)
             gc = gspread.authorize(creds)
         else:
             gc = gspread.service_account(filename="acesso.json")
-            
     except Exception as e:
-        st.error(f"Erro ao autenticar no Google Sheets. Erro: {e}")
+        st.error(f"Erro ao autenticar: {e}")
         return None
     
     try:
         sh = gc.open(sheet_name)
-        
         for tab in ABAS_A_BUSCAR:
             try:
                 worksheet = sh.worksheet(tab)
                 list_of_lists = worksheet.get_all_values()
-                
-                if len(list_of_lists) < 2:
-                    continue
-
-                # Pega o cabeçalho da linha 2 (índice 1)
+                if len(list_of_lists) < 2: continue
                 header = [h.strip().upper() for h in list_of_lists[1]]
                 data_rows = list_of_lists[2:] 
                 df = pd.DataFrame(data_rows, columns=header)
-                
-                # Normaliza nomes de colunas
                 df.columns = [c.strip().upper() for c in df.columns]
-                
-                # Garante que a coluna PEDIDO seja string para comparação
                 if 'PEDIDO' in df.columns:
                     df['PEDIDO'] = df['PEDIDO'].astype(str).str.strip()
-                
                 data[tab] = df
-                
             except gspread.WorksheetNotFound: 
-                st.error(f"Erro: Aba '{tab}' não encontrada na planilha.")
+                st.error(f"Erro: Aba '{tab}' não encontrada.")
                 continue
-        
         return data
-        
     except Exception as e:
-        st.error(f"Ocorreu um erro inesperado ao abrir a planilha: {e}")
+        st.error(f"Erro inesperado: {e}")
         return None
-
 
 # ----------------------------------------------------
 # 2. FUNÇÕES DE BUSCA E CONTROLE DE ESTADO
@@ -111,43 +83,29 @@ def initialize_state():
     if 'feedback_message' not in st.session_state:
         st.session_state['feedback_message'] = None
 
-
 def search_pedido(pedido: str, data: Dict[str, pd.DataFrame], carro_selecionado: str) -> Dict[str, str]:
     found_data = {
         "Pedido": pedido, "Origem": "", "Data": "", COLUNA_CARRO: "", 
         "Status": "Pedido Não Encontrado", "Carro Foco": carro_selecionado
     }
-    
-    # Busca o pedido em cada uma das abas carregadas (ALTA, EMERGENCIAL, GERAL_EMERGENCIAL)
     for sheet_name, df in data.items():
         if 'PEDIDO' not in df.columns: continue
-        
         match = df[df['PEDIDO'] == pedido]
         if not match.empty:
             row = match.iloc[0]
             found_data.update({
-                "Origem": sheet_name, 
-                "Data": row.get('DATA', ''), 
-                COLUNA_CARRO: row.get(COLUNA_CARRO, ''), 
-                "Status": row.get('STATUS', '')
+                "Origem": sheet_name, "Data": row.get('DATA', ''), 
+                COLUNA_CARRO: row.get(COLUNA_CARRO, ''), "Status": row.get('STATUS', '')
             })
             return found_data
     return found_data
 
-
 def perform_search(pedidos: List[str], data: Dict[str, pd.DataFrame], carro_selecionado: str) -> List[Dict[str, str]]:
-    if not pedidos or data is None:
-        return []
-
-    results = []
-    for pedido in pedidos:
-        result = search_pedido(pedido, data, carro_selecionado)
-        results.append(result)
-        
-    return results
-
+    if not pedidos or data is None: return []
+    return [search_pedido(p, data, carro_selecionado) for p in pedidos]
 
 def handle_search(data_frames: Dict[str, pd.DataFrame]):
+    # Pega o valor dos widgets via session_state
     input_text = st.session_state.backlog_input_text
     carro_selecionado = st.session_state.carro_select
     parsed_pedidos = parse_pedidos(input_text)
@@ -166,31 +124,25 @@ def handle_search(data_frames: Dict[str, pd.DataFrame]):
         new_df = pd.DataFrame(search_results)
         substituted = False
         new_history = []
-        
         for existing_df in st.session_state['search_history']:
             if existing_df['Carro Foco'].iloc[0] == carro_selecionado:
                 new_history.append(new_df)
                 substituted = True
             else:
                 new_history.append(existing_df)
-        
         if not substituted:
             new_history.append(new_df)
-
         st.session_state['search_history'] = new_history
         st.session_state['feedback_message'] = f"✅ Critério '{carro_selecionado}' atualizado."
-        
-    st.session_state.backlog_input_text = ""
-
+    
+    # A limpeza do campo agora é feita via callback ou reset no app() para evitar o erro de API
 
 def remove_last_search():
     if st.session_state['search_history']:
         st.session_state['search_history'].pop()
 
-
 def clear_search_history():
     st.session_state['search_history'] = []
-
 
 # ----------------------------------------------------
 # 3. FUNÇÕES DE ESTILO E EXIBIÇÃO
@@ -206,25 +158,20 @@ def apply_text_color_by_status(row):
             style_list.append('color: #008000; font-weight: bold;' if col in ['Pedido', 'Status'] else None)
     return style_list
 
-
 def display_search_history():
     history = st.session_state['search_history']
     if not history:
         st.info("Nenhuma busca realizada no momento.")
         return
-
     for df in history:
         carro_foco = df['Carro Foco'].iloc[0]
         df['Sort_Key'] = df['Status'].apply(lambda x: 1 if x == "Pedido Não Encontrado" else 0)
         df_sorted = df.sort_values(by='Sort_Key').drop(columns=['Sort_Key'])
-        
         df_display = df_sorted.rename(columns={COLUNA_CARRO: 'Carro Planilha'}).drop(columns=['Carro Foco'])
         column_order = ['Pedido', 'Origem', 'Data', 'Carro Planilha', 'Status']
-        
         st.markdown(f"### 🚗 CRITÉRIO: {carro_foco}")
         st.dataframe(df_display[column_order].style.apply(apply_text_color_by_status, axis=1), use_container_width=True, hide_index=True)
         st.markdown("---")
-
 
 # ----------------------------------------------------
 # 4. FUNÇÃO PRINCIPAL (APP)
@@ -244,9 +191,7 @@ def app():
     with st.spinner("Conectando ao banco de dados da planilha..."):
         data_frames = load_data(PLANILHA_NOME)
     
-    if data_frames is None: 
-        st.error("Não foi possível carregar as abas da planilha. Verifique se as abas ALTA, EMERGENCIAL e GERAL_EMERGENCIAL existem.")
-        st.stop()
+    if data_frames is None: st.stop()
     
     col1, col2 = st.columns([0.6, 0.4])
     with col1:
@@ -254,8 +199,11 @@ def app():
     
     with col2:
         st.selectbox("Critério de Carro:", options=LISTA_CARROS_CADASTRO, key='carro_select')
+        # Botão com lógica de limpeza segura
         if st.button("BUSCAR DADOS", type="primary", use_container_width=True):
             handle_search(data_frames)
+            # Limpamos o estado do texto de forma segura antes do rerun
+            st.session_state.backlog_input_text = ""
             st.rerun()
     
     st.divider()
