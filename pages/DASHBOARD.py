@@ -113,7 +113,7 @@ def gerar_grafico_ranking(df, d_ini, d_fim):
     
     # Agrupar e Ordenar para o Ranking (Maiores em cima)
     df_plot = df.groupby(['UNIDADE', 'ORIGEM'])['VALOR_NUM'].sum().reset_index()
-    df_ranking = df_plot.groupby('UNIDADE')['VALOR_NUM'].sum().sort_values(ascending=True).reset_index()
+    df_ranking = df_plot.groupby('UNIDADE')['VALOR_NUM'].sum().sort_values(ascending=False).reset_index()
     unidades_ordem = df_ranking['UNIDADE'].tolist()
     
     total_geral = df_plot['VALOR_NUM'].sum()
