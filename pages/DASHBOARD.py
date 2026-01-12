@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import smtplib
 import os
 import sys
+import io
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
@@ -72,10 +73,9 @@ def preparar_dados_consolidados(data_dict, d_inicio, d_fim):
         df_a['DATA_DT'] = pd.to_datetime(df_a['DATA'], dayfirst=True, errors='coerce').dt.date
         
         if 'PEDIDO' in df_a.columns:
-            # Tenta converter para número, mas mantém o original para checar textos
             df_a['NUM_LOGICA'] = pd.to_numeric(df_a['PEDIDO'], errors='coerce')
             
-            # Condição: Se for número, deve estar nos intervalos. Se for TEXTO, passa direto.
+            # Condição: Se for número, checa intervalo. Se for texto (APROVADA/COTAÇÃO), aceita.
             mask_num = (df_a['NUM_LOGICA'].notna()) & (
                 ((df_a['NUM_LOGICA'] >= 300000) & (df_a['NUM_LOGICA'] <= 400000)) | 
                 ((df_a['NUM_LOGICA'] >= 1100000) & (df_a['NUM_LOGICA'] <= 1300000))
@@ -83,8 +83,6 @@ def preparar_dados_consolidados(data_dict, d_inicio, d_fim):
             mask_txt = (df_a['NUM_LOGICA'].isna()) & (df_a['PEDIDO'].astype(str).str.strip() != "")
             
             mask_data = (df_a['DATA_DT'] >= d_inicio) & (df_a['DATA_DT'] <= d_fim)
-            
-            # Filtro Final: Data correta AND (Intervalo Numérico OR Valor de Texto)
             df_filt = df_a.loc[mask_data & (mask_num | mask_txt)].copy()
             
             if not df_filt.empty:
@@ -110,9 +108,7 @@ def preparar_dados_consolidados(data_dict, d_inicio, d_fim):
 def gerar_grafico_ranking(df, d_ini, d_fim):
     if df.empty: return None
     
-    # Agrupa por unidade e origem para o gráfico empilhado
     df_plot = df.groupby(['UNIDADE', 'ORIGEM'])['VALOR_NUM'].sum().reset_index()
-    # Soma total para ordenação e rótulos
     df_ranking = df_plot.groupby('UNIDADE')['VALOR_NUM'].sum().sort_values(ascending=True).reset_index()
     unidades_ordem = df_ranking['UNIDADE'].tolist()
     total_geral = df_plot['VALOR_NUM'].sum()
@@ -123,18 +119,16 @@ def gerar_grafico_ranking(df, d_ini, d_fim):
         color_discrete_map={'ALTA': '#1F4E79', 'EMERGENCIAL': '#942525'},
         category_orders={'UNIDADE': unidades_ordem},
         template="plotly_dark",
-        text='VALOR_NUM' # Ativa os rótulos de dados
+        text='VALOR_NUM'
     )
 
-    # Configuração dos rótulos de cada parte da barra (ALTA e EMERGENCIAL)
     fig.update_traces(
-        texttemplate='%{x:,.2s}', # Formato compacto (ex: 15k)
-        textposition='auto',      # Ajusta automaticamente dentro ou fora
-        cliponaxis=False,         # Impede que o texto seja cortado nas bordas
+        texttemplate='%{x:,.2s}', 
+        textposition='auto',      
+        cliponaxis=False,         
         textfont=dict(size=10)
     )
 
-    # Adiciona o Valor TOTAL ao final de cada conjunto de barras
     for _, row in df_ranking.iterrows():
         fig.add_annotation(
             y=row['UNIDADE'], x=row['VALOR_NUM'],
@@ -143,21 +137,61 @@ def gerar_grafico_ranking(df, d_ini, d_fim):
         )
 
     fig.update_layout(
-        title=f"<b>RANKING CONSOLIDADO: ALTA + EMERGENCIAL</b><br><span style='font-size:12px;color:gray;'>Período: {d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}</span>",
+        title=f"<b>RANKING CONSOLIDADO</b><br><span style='font-size:12px;color:gray;'>{d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}</span>",
         height=max(500, len(unidades_ordem) * 45),
         margin=dict(l=180, r=160, t=80, b=100),
-        xaxis=dict(showgrid=False, zeroline=False, visible=False),
-        yaxis=dict(title="", tickfont=dict(size=11)),
+        xaxis=dict(visible=False),
+        yaxis=dict(title=""),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         annotations=[dict(
             x=0.5, y=-0.15, xref="paper", yref="paper",
-            text=f"INVESTIMENTO TOTAL NO PERÍODO: {br_money(total_geral)}",
+            text=f"INVESTIMENTO TOTAL: {br_money(total_geral)}",
             showarrow=False, font=dict(size=18, color="#00FF7F")
         )]
     )
     return fig
+
+# --- FUNÇÃO DE ENVIO DE EMAIL ---
+
+def enviar_relatorio_email(fig, d_ini, d_fim, total_valor):
+    try:
+        user = st.secrets["email_user"]
+        password = st.secrets["email_password"]
+        destinatario = "kerlesalves@gmail.com"
+
+        msg = MIMEMultipart()
+        msg['Subject'] = f"Relatório Financeiro Saritur: {d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}"
+        msg['From'] = user
+        msg['To'] = destinatario
+
+        corpo = f"""
+        Olá, segue o resumo financeiro do período selecionado:
+        
+        Período: {d_ini.strftime('%d/%m/%Y')} até {d_fim.strftime('%d/%m/%Y')}
+        Investimento Total: {br_money(total_valor)}
+        
+        O gráfico detalhado segue em anexo.
+        """
+        msg.attach(MIMEText(corpo, 'plain'))
+
+        # Converter gráfico para imagem
+        img_bytes = fig.to_image(format="png", width=1200, height=800)
+        part = MIMEImage(img_bytes)
+        part.add_header('Content-Disposition', 'attachment', filename="ranking_financeiro.png")
+        msg.attach(part)
+
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()
+            server.login(user, password)
+            server.send_message(msg)
+        return True
+    except Exception as e:
+        st.sidebar.error(f"Erro ao enviar: {e}")
+        return False
+
+# --- APP PRINCIPAL ---
 
 def app():
     st.set_page_config(page_title="Dashboard Saritur", layout="wide")
@@ -172,22 +206,26 @@ def app():
 
     data_dict = load_data(PLANILHA_NOME)
     
+    # 1. Tabela de Amanhã
     df_alta_raw = data_dict.get('ALTA', pd.DataFrame())
     df_amanha = preparar_tabela_amanha(df_alta_raw)
     
-    st.subheader(f"📅 Programação para Amanhã ({(hoje + timedelta(days=1)).strftime('%d/%m/%Y')})")
+    st.subheader(f"📋 Programação para Amanhã ({(hoje + timedelta(days=1)).strftime('%d/%m/%Y')})")
     if not df_amanha.empty:
         st.dataframe(df_amanha, use_container_width=True, hide_index=True)
     else:
         st.info("Sem registros para amanhã.")
 
     st.markdown("---")
+    
+    # 2. Processamento e Gráfico
     df_cons = preparar_dados_consolidados(data_dict, d_ini, d_fim)
     
     col_graf, col_met = st.columns([3, 1])
     
+    fig = gerar_grafico_ranking(df_cons, d_ini, d_fim)
+    
     with col_graf:
-        fig = gerar_grafico_ranking(df_cons, d_ini, d_fim)
         if fig:
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
         else:
@@ -199,7 +237,17 @@ def app():
             resumo = df_cons.groupby('ORIGEM')['VALOR_NUM'].sum()
             for origem, valor in resumo.items():
                 st.metric(origem, br_money(valor))
-            st.metric("TOTAL GERAL", br_money(df_cons['VALOR_NUM'].sum()))
+            
+            total_geral = df_cons['VALOR_NUM'].sum()
+            st.metric("TOTAL GERAL", br_money(total_geral))
+
+            # Lógica de Email na Sidebar
+            st.sidebar.markdown("---")
+            if st.sidebar.button("📧 ENVIAR RELATÓRIO POR E-MAIL"):
+                with st.sidebar.status("Enviando..."):
+                    sucesso = enviar_relatorio_email(fig, d_ini, d_fim, total_geral)
+                if sucesso:
+                    st.sidebar.success("Relatório enviado com sucesso!")
 
 if __name__ == "__main__":
-    app()
+    app()   
