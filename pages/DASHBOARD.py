@@ -43,7 +43,6 @@ def preparar_tabela_amanha(df_alta_orig):
     df['DATA_DT'] = pd.to_datetime(df['DATA'], dayfirst=True, errors='coerce').dt.date
     amanha = date.today() + timedelta(days=1)
     
-    # CORREÇÃO: Agora aceita qualquer status para amanhã
     mask = (df['DATA_DT'] == amanha)
     df_f = df.loc[mask].copy()
     
@@ -73,12 +72,21 @@ def preparar_dados_consolidados(data_dict, d_inicio, d_fim):
         df_a['DATA_DT'] = pd.to_datetime(df_a['DATA'], dayfirst=True, errors='coerce').dt.date
         
         if 'PEDIDO' in df_a.columns:
+            # Tenta converter para número, mas mantém o original para checar textos
             df_a['NUM_LOGICA'] = pd.to_numeric(df_a['PEDIDO'], errors='coerce')
-            mask = (df_a['DATA_DT'] >= d_inicio) & (df_a['DATA_DT'] <= d_fim) & \
-                   (((df_a['NUM_LOGICA'] >= 300000) & (df_a['NUM_LOGICA'] <= 400000)) | 
-                    ((df_a['NUM_LOGICA'] >= 1100000) & (df_a['NUM_LOGICA'] <= 1300000)))
             
-            df_filt = df_a.loc[mask].copy()
+            # Condição: Se for número, deve estar nos intervalos. Se for TEXTO, passa direto.
+            mask_num = (df_a['NUM_LOGICA'].notna()) & (
+                ((df_a['NUM_LOGICA'] >= 300000) & (df_a['NUM_LOGICA'] <= 400000)) | 
+                ((df_a['NUM_LOGICA'] >= 1100000) & (df_a['NUM_LOGICA'] <= 1300000))
+            )
+            mask_txt = (df_a['NUM_LOGICA'].isna()) & (df_a['PEDIDO'].astype(str).str.strip() != "")
+            
+            mask_data = (df_a['DATA_DT'] >= d_inicio) & (df_a['DATA_DT'] <= d_fim)
+            
+            # Filtro Final: Data correta AND (Intervalo Numérico OR Valor de Texto)
+            df_filt = df_a.loc[mask_data & (mask_num | mask_txt)].copy()
+            
             if not df_filt.empty:
                 df_filt['VALOR_NUM'] = df_filt['VALOR'].apply(limpar_moeda)
                 lista_final.append(df_filt[['UNIDADE', 'VALOR_NUM']].assign(ORIGEM='ALTA'))
@@ -88,11 +96,11 @@ def preparar_dados_consolidados(data_dict, d_inicio, d_fim):
     if not df_e.empty:
         df_e.columns = [str(c).strip().upper() for c in df_e.columns]
         df_e['DATA_DT'] = pd.to_datetime(df_e['DATA'], dayfirst=True, errors='coerce').dt.date
-        mask = (df_e['DATA_DT'] >= d_inicio) & (df_e['DATA_DT'] <= d_fim)
-        df_filt = df_e.loc[mask].copy()
-        if not df_filt.empty:
-            df_filt['VALOR_NUM'] = df_filt['VALOR'].apply(limpar_moeda)
-            lista_final.append(df_filt[['UNIDADE', 'VALOR_NUM']].assign(ORIGEM='EMERGENCIAL'))
+        mask_data_e = (df_e['DATA_DT'] >= d_inicio) & (df_e['DATA_DT'] <= d_fim)
+        df_filt_e = df_e.loc[mask_data_e].copy()
+        if not df_filt_e.empty:
+            df_filt_e['VALOR_NUM'] = df_filt_e['VALOR'].apply(limpar_moeda)
+            lista_final.append(df_filt_e[['UNIDADE', 'VALOR_NUM']].assign(ORIGEM='EMERGENCIAL'))
             
     if not lista_final: return pd.DataFrame()
     df_res = pd.concat(lista_final, ignore_index=True)
@@ -102,7 +110,9 @@ def preparar_dados_consolidados(data_dict, d_inicio, d_fim):
 def gerar_grafico_ranking(df, d_ini, d_fim):
     if df.empty: return None
     
+    # Agrupa por unidade e origem para o gráfico empilhado
     df_plot = df.groupby(['UNIDADE', 'ORIGEM'])['VALOR_NUM'].sum().reset_index()
+    # Soma total para ordenação e rótulos
     df_ranking = df_plot.groupby('UNIDADE')['VALOR_NUM'].sum().sort_values(ascending=True).reset_index()
     unidades_ordem = df_ranking['UNIDADE'].tolist()
     total_geral = df_plot['VALOR_NUM'].sum()
@@ -112,96 +122,84 @@ def gerar_grafico_ranking(df, d_ini, d_fim):
         orientation='h',
         color_discrete_map={'ALTA': '#1F4E79', 'EMERGENCIAL': '#942525'},
         category_orders={'UNIDADE': unidades_ordem},
-        template="plotly_dark" # Alterado para Dark para visual mais moderno
+        template="plotly_dark",
+        text='VALOR_NUM' # Ativa os rótulos de dados
     )
 
-    # Melhoria na legibilidade das barras
+    # Configuração dos rótulos de cada parte da barra (ALTA e EMERGENCIAL)
     fig.update_traces(
-        texttemplate='%{x:,.2s}', 
-        textposition='none', # Oculta labels internos para evitar rotação/esmagamento
-        marker_line_width=0
+        texttemplate='%{x:,.2s}', # Formato compacto (ex: 15k)
+        textposition='auto',      # Ajusta automaticamente dentro ou fora
+        cliponaxis=False,         # Impede que o texto seja cortado nas bordas
+        textfont=dict(size=10)
     )
 
-    # Adiciona o valor TOTAL à direita de cada barra (Sempre legível)
+    # Adiciona o Valor TOTAL ao final de cada conjunto de barras
     for _, row in df_ranking.iterrows():
         fig.add_annotation(
             y=row['UNIDADE'], x=row['VALOR_NUM'],
             text=f"  <b>{br_money(row['VALOR_NUM'])}</b>",
-            showarrow=False, xanchor='left', font=dict(size=12, color="white")
+            showarrow=False, xanchor='left', font=dict(size=11, color="#00FF7F")
         )
 
     fig.update_layout(
-        title=f"<b>RANKING DE GASTOS POR UNIDADE</b><br><span style='font-size:12px;'>{d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}</span>",
-        height=max(500, len(unidades_ordem) * 40),
-        margin=dict(l=180, r=150, t=80, b=100),
-        xaxis=dict(visible=False), # Esconde o eixo X e as linhas de grade para limpar o visual
+        title=f"<b>RANKING CONSOLIDADO: ALTA + EMERGENCIAL</b><br><span style='font-size:12px;color:gray;'>Período: {d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}</span>",
+        height=max(500, len(unidades_ordem) * 45),
+        margin=dict(l=180, r=160, t=80, b=100),
+        xaxis=dict(showgrid=False, zeroline=False, visible=False),
         yaxis=dict(title="", tickfont=dict(size=11)),
-        showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         annotations=[dict(
             x=0.5, y=-0.15, xref="paper", yref="paper",
-            text=f"INVESTIMENTO TOTAL: {br_money(total_geral)}",
-            showarrow=False, font=dict(size=16, color="#00FF7F")
+            text=f"INVESTIMENTO TOTAL NO PERÍODO: {br_money(total_geral)}",
+            showarrow=False, font=dict(size=18, color="#00FF7F")
         )]
     )
     return fig
 
-# --- APP PRINCIPAL ---
-
 def app():
-    st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
-    st.title("📊 Dashboard de Controle Orçamentário")
+    st.set_page_config(page_title="Dashboard Saritur", layout="wide")
+    st.title("📊 Dashboard Financeiro")
     
     hoje = date.today()
     inicio_semana = hoje - timedelta(days=hoje.weekday())
     
-    st.sidebar.header("Configurações de Exibição")
-    d_ini = st.sidebar.date_input("Data Início", inicio_semana)
-    d_fim = st.sidebar.date_input("Data Fim", inicio_semana + timedelta(days=6))
+    st.sidebar.header("Filtros")
+    d_ini = st.sidebar.date_input("Início", inicio_semana)
+    d_fim = st.sidebar.date_input("Fim", inicio_semana + timedelta(days=6))
 
     data_dict = load_data(PLANILHA_NOME)
     
-    # 1. Tabela de Amanhã
     df_alta_raw = data_dict.get('ALTA', pd.DataFrame())
     df_amanha = preparar_tabela_amanha(df_alta_raw)
     
-    with st.container():
-        st.subheader(f"📋 Programação para Amanhã ({(hoje + timedelta(days=1)).strftime('%d/%m/%Y')})")
-        if not df_amanha.empty:
-            st.dataframe(df_amanha, use_container_width=True, hide_index=True)
-        else:
-            st.info("Nenhuma programação encontrada para a data de amanhã.")
+    st.subheader(f"📅 Programação para Amanhã ({(hoje + timedelta(days=1)).strftime('%d/%m/%Y')})")
+    if not df_amanha.empty:
+        st.dataframe(df_amanha, use_container_width=True, hide_index=True)
+    else:
+        st.info("Sem registros para amanhã.")
 
-    # 2. Gráfico Consolidado
     st.markdown("---")
     df_cons = preparar_dados_consolidados(data_dict, d_ini, d_fim)
     
-    col1, col2 = st.columns([3, 1])
+    col_graf, col_met = st.columns([3, 1])
     
-    with col1:
-        fig_ranking = gerar_grafico_ranking(df_cons, d_ini, d_fim)
-        if fig_ranking:
-            st.plotly_chart(fig_ranking, use_container_width=True, config={'displayModeBar': False})
+    with col_graf:
+        fig = gerar_grafico_ranking(df_cons, d_ini, d_fim)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
         else:
-            st.warning("Sem dados para os filtros selecionados.")
+            st.warning("Nenhum dado encontrado para o período.")
             
-    with col2:
+    with col_met:
         if not df_cons.empty:
-            st.subheader("Resumo por Origem")
-            df_resumo = df_cons.groupby('ORIGEM')['VALOR_NUM'].sum().reset_index()
-            for _, row in df_resumo.iterrows():
-                st.metric(label=row['ORIGEM'], value=br_money(row['VALOR_NUM']))
-            
-            total_periodo = df_cons['VALOR_NUM'].sum()
-            st.metric(label="TOTAL GERAL", value=br_money(total_periodo))
-
-    # 3. Envio de E-mail
-    st.sidebar.markdown("---")
-    if st.sidebar.button("📧 Disparar Relatório por E-mail"):
-        # Lógica de e-mail mantida...
-        st.sidebar.success("Relatório processado para envio.")
+            st.subheader("Resumo")
+            resumo = df_cons.groupby('ORIGEM')['VALOR_NUM'].sum()
+            for origem, valor in resumo.items():
+                st.metric(origem, br_money(valor))
+            st.metric("TOTAL GERAL", br_money(df_cons['VALOR_NUM'].sum()))
 
 if __name__ == "__main__":
     app()
