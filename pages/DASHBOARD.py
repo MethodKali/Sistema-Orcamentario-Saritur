@@ -113,51 +113,46 @@ def gerar_grafico_ranking(df, d_ini, d_fim):
     if 'ALTA' not in df_pivot.columns: df_pivot['ALTA'] = 0.0
     if 'EMERGENCIAL' not in df_pivot.columns: df_pivot['EMERGENCIAL'] = 0.0
     
+    # Ranqueamento pelo Total (Crescente para que a maior unidade fique no topo do gráfico horizontal)
     df_pivot['TOTAL'] = df_pivot['ALTA'] + df_pivot['EMERGENCIAL']
     df_pivot = df_pivot.sort_values(by='TOTAL', ascending=True)
     
-    total_geral = df_pivot['TOTAL'].sum()
-
     fig = go.Figure()
 
-    # Barra de ALTA (superior)
+    # Barra de ALTA - Adicionada PRIMEIRO para ficar na parte superior do grupo
     fig.add_trace(go.Bar(
         y=df_pivot['UNIDADE'], x=df_pivot['ALTA'],
         name='ALTA', orientation='h',
         marker=dict(color='#1F4E79'),
         text=[br_money(v) if v > 0 else "" for v in df_pivot['ALTA']],
-        textposition='inside', insidetextanchor='end'
+        textposition='outside', # Valor para fora da barra
+        cliponaxis=False # Impede que o texto seja cortado
     ))
 
-    # Barra de EMERGENCIAL (inferior)
+    # Barra de EMERGENCIAL - Adicionada DEPOIS para ficar abaixo da ALTA
     fig.add_trace(go.Bar(
         y=df_pivot['UNIDADE'], x=df_pivot['EMERGENCIAL'],
         name='EMERGENCIAL', orientation='h',
         marker=dict(color='#942525'),
         text=[br_money(v) if v > 0 else "" for v in df_pivot['EMERGENCIAL']],
-        textposition='inside', insidetextanchor='end'
+        textposition='outside', # Valor para fora da barra
+        cliponaxis=False
     ))
 
     fig.update_layout(
         template="plotly_dark",
         barmode='group',
-        bargap=0.2,
+        bargap=0.3, # Espaço entre as unidades
+        bargroupgap=0.05, # Espaço entre as barras ALTA/EMERGENCIAL
         title=f"<b>RANKING FINANCEIRO CONSOLIDADO</b><br><span style='font-size:12px;'>Período: {d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}</span>",
-        height=max(500, len(df_pivot) * 60),
-        margin=dict(l=200, r=50, t=100, b=100),
+        height=max(600, len(df_pivot) * 70), # Altura dinâmica baseada na quantidade de unidades
+        margin=dict(l=200, r=150, t=100, b=100), # Margem R=150 para caber o texto 'outside'
         xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', visible=False),
+        yaxis=dict(autorange="reversed"), # Garante que o ranking siga a ordem correta
         paper_bgcolor='#0E1117',
         plot_bgcolor='#0E1117',
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
-
-    # Label de valor TOTAL à direita
-    for _, row in df_pivot.iterrows():
-        fig.add_annotation(
-            y=row['UNIDADE'], x=row['TOTAL'],
-            text=f" <b>{br_money(row['TOTAL'])}</b>",
-            showarrow=False, xanchor='left', font=dict(color="#00FF7F", size=12)
-        )
 
     return fig
 
@@ -173,13 +168,13 @@ def enviar_relatorio_email(fig, d_ini, d_fim, total_valor):
         msg['Subject'] = f"Relatório Financeiro Saritur: {d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}"
         msg['From'], msg['To'] = user, destinatario
 
-        corpo = f"Segue anexo o ranking de investimentos ({d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}).\nTotal: {br_money(total_valor)}"
+        corpo = f"Segue anexo o ranking de investimentos ({d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}).\nTotal Geral: {br_money(total_valor)}"
         msg.attach(MIMEText(corpo, 'plain'))
 
         # Exportação mantendo fundo para visualização profissional
-        img_bytes = fig.to_image(format="png", width=1200, height=max(800, fig.layout.height), scale=2)
+        img_bytes = fig.to_image(format="png", width=1400, height=max(1000, fig.layout.height), scale=2)
         part = MIMEImage(img_bytes)
-        part.add_header('Content-Disposition', 'attachment', filename="ranking.png")
+        part.add_header('Content-Disposition', 'attachment', filename="ranking_saritur.png")
         msg.attach(part)
 
         with smtplib.SMTP('smtp.gmail.com', 587) as server:
