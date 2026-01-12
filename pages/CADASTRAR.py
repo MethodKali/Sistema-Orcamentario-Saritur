@@ -27,16 +27,18 @@ def extrair_numeros_da_string(texto):
 def limpar_apenas_numeros(texto):
     return re.sub(r'\D', '', str(texto))
 
-def get_actual_next_row(ws):
-    """Retorna o número da próxima linha física vazia na planilha"""
-    return len(ws.col_values(3)) + 1 # Baseado na coluna C (Data) que sempre terá valor
+def get_actual_next_row(ws, coluna_referencia=3):
+    """
+    Encontra a próxima linha disponível baseada em uma coluna específica (Coluna C = 3).
+    Isso ignora filtros e outras colunas que possam ter fórmulas distantes.
+    """
+    valores_coluna = ws.col_values(coluna_referencia)
+    return len(valores_coluna) + 1
 
 def scanner_duplicatas_globais(sh):
     dados_alta = sh.worksheet("ALTA").get_all_values()[2:]
     dados_emerg = sh.worksheet("EMERGENCIAL").get_all_values()[2:]
-    # Na ALTA o número agora está na Coluna F (índice 5)
     pedidos_alta = [limpar_apenas_numeros(r[5]) for r in dados_alta if len(r) > 5 and limpar_apenas_numeros(r[5])]
-    # Na EMERGENCIAL o número continua na Coluna D (índice 3)
     pedidos_emerg = [limpar_apenas_numeros(r[3]) for r in dados_emerg if len(r) > 3 and limpar_apenas_numeros(r[3])]
     return sorted(list(set(pedidos_alta).intersection(set(pedidos_emerg))))
 
@@ -58,7 +60,7 @@ def buscar_em_todas_as_abas_detalhado(sh, lista_numeros):
 
 def excluir_por_numero(sh, aba_nome, lista_numeros):
     ws = sh.worksheet(aba_nome)
-    col_idx = 6 if aba_nome == "ALTA" else 4 # Coluna F na ALTA, Coluna D na EMERGENCIAL
+    col_idx = 6 if aba_nome == "ALTA" else 4
     col_values = ws.col_values(col_idx)
     linhas_para_deletar = []
     for i, valor in enumerate(col_values):
@@ -75,15 +77,12 @@ client = get_gspread_client()
 if not client: st.stop()
 sh = client.open_by_key(SPREADSHEET_ID)
 
-# SIDEBAR
-st.sidebar.title("🔍 Scanner de Duplicatas")
+# SIDEBAR (Scanner)
 duplicas_globais = scanner_duplicatas_globais(sh)
 if duplicas_globais:
     st.sidebar.warning(f"Existem {len(duplicas_globais)} duplicatas!")
     if st.sidebar.button("Mostrar Lista"):
         for num in duplicas_globais: st.sidebar.code(num)
-else:
-    st.sidebar.success("Sem duplicatas entre abas.")
 
 st.title("📝 Gestão de Pedidos e Solicitações")
 
@@ -124,7 +123,7 @@ if btn_cadastrar:
         qtd_rem = excluir_por_numero(sh, "ALTA", s_nums) + excluir_por_numero(sh, "EMERGENCIAL", s_nums)
         if qtd_rem > 0: msg_exc = f" ({qtd_rem} antigo(s) removido(s))"
 
-    # 2. ITENS PARA CADASTRAR
+    # 2. DEFINIÇÃO DE ITENS
     if aba_dest == "ALTA" and status_selecionado == "PEDIDO":
         itens_para_validar = p_nums
     else:
@@ -136,46 +135,41 @@ if btn_cadastrar:
             st.rerun()
         st.stop()
 
-    # 3. VALIDAÇÃO
+    # 3. VALIDAÇÃO DE DUPLICATAS
     mapa_geral = buscar_em_todas_as_abas_detalhado(sh, itens_para_validar)
     itens_finais = [i for i in itens_para_validar if i not in mapa_geral]
     for item in itens_para_validar:
         if item in mapa_geral: st.session_state.alertas_erro.append(f"❌ Item {item} já existe na aba {mapa_geral[item]}.")
 
-    # 4. APPEND COM FÓRMULA DINÂMICA
+    # 4. INCLUSÃO REFORÇADA (ANTI-ESCADA / ANTI-FILTRO)
     if itens_finais:
         ws = sh.worksheet(aba_dest)
         dt_str = data_cad.strftime("%d/%m/%Y")
-        prox_linha = get_actual_next_row(ws)
+        
+        # Encontra a linha real baseada na Coluna C (Data)
+        prox_linha = get_actual_next_row(ws, coluna_referencia=3)
         novas_linhas = []
 
         for i, item in enumerate(itens_finais):
             linha_atual = prox_linha + i
             if aba_dest == "ALTA":
                 status_item = status_selecionado if item in s_nums else "PEDIDO"
-                # FÓRMULA: =IF(C{linha}=""; ""; TODAY()-C{linha}) -> Compara com a Coluna C (Data)
                 formula_dias = f'=IF(C{linha_atual}=""; ""; TODAY()-C{linha_atual})'
-                # Estrutura: A:Vazio | B:Dias | C:Data | D:Unidade | E:Carro | F:Item | G:Valor | H:Fornecedor | I:Status
-                novas_linhas.append([formula_dias, dt_str, unidade, carro, item, valor, fornecedor, status_item])
+                # IMPORTANTE: A lista começa com "" para a coluna A (que é vazia na sua imagem)
+                # Coluna A: vazio, B: formula, C: data, D: unidade, E: carro, F: item, G: valor, H: fornecedor, I: status
+                novas_linhas.append(["", formula_dias, dt_str, unidade, carro, item, valor, fornecedor, status_item])
             else:
-                # EMERGENCIAL: Mantém o layout original
-                novas_linhas.append([unidade, datetime.now().strftime("%d/%m/%Y %H:%M:%S"), carro, item, valor, fornecedor, "", "", "", ""])
+                # EMERGENCIAL (Layout simplificado conforme sua descrição)
+                # Coluna A: unidade, B: timestamp, C: carro, D: item, E: valor, F: fornecedor
+                novas_linhas.append([unidade, datetime.now().strftime("%d/%m/%Y %H:%M:%S"), carro, item, valor, fornecedor])
 
-        ws.append_rows(novas_linhas, value_input_option='USER_ENTERED')
-        st.session_state.mensagem_sucesso = f"✅ {len(novas_linhas)} itens adicionados.{msg_exc}"
+        # A MÁGICA: Em vez de append_rows, usamos update para garantir o Range correto
+        # Para ALTA (Coluna A até I), Para EMERGENCIAL (Coluna A até F)
+        col_fim = "I" if aba_dest == "ALTA" else "F"
+        range_target = f"A{prox_linha}:{col_fim}{prox_linha + len(novas_linhas) - 1}"
+        
+        ws.update(range_target, novas_linhas, value_input_option='USER_ENTERED')
+        
+        st.session_state.mensagem_sucesso = f"✅ {len(novas_linhas)} itens adicionados com segurança.{msg_exc}"
     
     st.rerun()
-
-
-st.markdown("---")
-st.subheader("🗑️ Exclusão Manual")
-with st.expander("Ferramentas"):
-    with st.form("form_exclusao", clear_on_submit=True):
-        aba_ex = st.selectbox("Aba", ["ALTA", "EMERGENCIAL"], key="man_aba")
-        txt_ex = st.text_area("Números para excluir")
-        if st.form_submit_button("EXCLUIR"):
-            n_ex = extrair_numeros_da_string(txt_ex)
-            if n_ex:
-                qtd = excluir_por_numero(sh, aba_ex, n_ex)
-                st.session_state.mensagem_sucesso = f"🗑️ {qtd} item(s) removidos."
-                st.rerun()
