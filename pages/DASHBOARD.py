@@ -115,7 +115,7 @@ def gerar_grafico_ranking(df, d_ini, d_fim):
     
     # Ranqueamento pelo Total (Crescente para que a maior unidade fique no topo do gráfico horizontal)
     df_pivot['TOTAL'] = df_pivot['ALTA'] + df_pivot['EMERGENCIAL']
-    df_pivot = df_pivot.sort_values(by='TOTAL', ascending=True)
+    df_pivot = df_pivot.sort_values(by='TOTAL', ascending=False)
     
     fig = go.Figure()
 
