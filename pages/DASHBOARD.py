@@ -30,7 +30,7 @@ def limpar_moeda(v):
     except: return 0.0
 
 def br_money(valor):
-    """Formata valor numérico para String de moeda brasileira"""
+    """Formata número para o padrão de moeda brasileiro"""
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def preparar_tabela_amanha(df_alta_orig):
@@ -46,7 +46,7 @@ def preparar_tabela_amanha(df_alta_orig):
     
     if df_f.empty: return pd.DataFrame()
 
-    colunas_desejadas = ["DATA", "UNIDADE", "CARRO | UTILIZAÇÃO", "ITEM", "VALOR"]
+    colunas_desejadas = ["DATA", "UNIDADE", "CARRO | UTILIZAÇÃO", "PEDIDO", "VALOR"]
     colunas_existentes = [c for c in colunas_desejadas if c in df_f.columns]
     df_f = df_f[colunas_existentes]
 
@@ -55,7 +55,7 @@ def preparar_tabela_amanha(df_alta_orig):
         "DATA": "TOTAL GERAL", 
         "UNIDADE": "---", 
         "CARRO | UTILIZAÇÃO": "---", 
-        "ITEM": "---",
+        "PEDIDO": "---",
         "VALOR": br_money(total_num)
     }])
     return pd.concat([df_f, linha_total], ignore_index=True)
@@ -69,24 +69,25 @@ def preparar_dados_consolidados(data_dict, d_inicio, d_fim):
         df_a.columns = [str(c).strip().upper() for c in df_a.columns]
         df_a['DATA_DT'] = pd.to_datetime(df_a['DATA'], dayfirst=True, errors='coerce').dt.date
         
-        # Converte a coluna ITEM (Coluna F) para número para checar intervalo 300k-400k
-        df_a['NUM_SOLIC'] = pd.to_numeric(df_a['ITEM'], errors='coerce')
-        
-        # Lógica: No período da semana E (Se for STATUS PEDIDO OU ID entre 300.000 e 400.000)
-        mask = (
-            (df_a['DATA_DT'] >= d_inicio) & (df_a['DATA_DT'] <= d_fim)
-        ) & (
-            (df_a['STATUS'].astype(str).str.strip().str.upper() == "PEDIDO") | 
-            ((df_a['NUM_SOLIC'] >= 300000) & (df_a['NUM_SOLIC'] <= 400000))
-        )
-        
-        df_filt = df_a.loc[mask]
-        if not df_filt.empty:
-            lista_final.append(pd.DataFrame({
-                'UNIDADE': df_filt['UNIDADE'].astype(str).str.strip().str.upper(),
-                'VALOR_NUM': df_filt['VALOR'].apply(limpar_moeda),
-                'ORIGEM': 'ALTA'
-            }))
+        # Lógica centralizada na coluna 'PEDIDO' (onde residem solicitações e pedidos)
+        if 'PEDIDO' in df_a.columns:
+            df_a['NUM_LOGICA'] = pd.to_numeric(df_a['PEDIDO'], errors='coerce')
+            
+            # FILTRO: Data correta E (Número entre 300k-400k OU 1.1M-1.3M)
+            mask = (
+                (df_a['DATA_DT'] >= d_inicio) & (df_a['DATA_DT'] <= d_fim)
+            ) & (
+                ((df_a['NUM_LOGICA'] >= 300000) & (df_a['NUM_LOGICA'] <= 400000)) | 
+                ((df_a['NUM_LOGICA'] >= 1100000) & (df_a['NUM_LOGICA'] <= 1300000))
+            )
+            
+            df_filt = df_a.loc[mask]
+            if not df_filt.empty:
+                lista_final.append(pd.DataFrame({
+                    'UNIDADE': df_filt['UNIDADE'].astype(str).str.strip().str.upper(),
+                    'VALOR_NUM': df_filt['VALOR'].apply(limpar_moeda),
+                    'ORIGEM': 'ALTA'
+                }))
             
     # --- PROCESSAR EMERGENCIAL ---
     df_e = data_dict.get('EMERGENCIAL', pd.DataFrame()).copy()
@@ -110,16 +111,12 @@ def preparar_dados_consolidados(data_dict, d_inicio, d_fim):
 def gerar_grafico_ranking(df, d_ini, d_fim):
     if df.empty: return None
     
-    # Agrupar e Ordenar (Menor para Maior para o gráfico horizontal subir o ranking)
+    # Agrupar e Ordenar para o Ranking (Maiores em cima)
     df_plot = df.groupby(['UNIDADE', 'ORIGEM'])['VALOR_NUM'].sum().reset_index()
     df_ranking = df_plot.groupby('UNIDADE')['VALOR_NUM'].sum().sort_values(ascending=True).reset_index()
     unidades_ordem = df_ranking['UNIDADE'].tolist()
     
     total_geral = df_plot['VALOR_NUM'].sum()
-
-    # Cores Corporativas
-    cor_alta = '#1F4E79'  # Azul Sóbrio
-    cor_emerg = '#C00000' # Vermelho Decisivo
 
     fig = px.bar(
         df_plot, 
@@ -127,41 +124,34 @@ def gerar_grafico_ranking(df, d_ini, d_fim):
         x='VALOR_NUM', 
         color='ORIGEM',
         orientation='h',
-        color_discrete_map={'ALTA': cor_alta, 'EMERGENCIAL': cor_emerg},
+        color_discrete_map={'ALTA': '#1F4E79', 'EMERGENCIAL': '#C00000'},
         category_orders={'UNIDADE': unidades_ordem},
         template="plotly_white"
     )
 
-    # Configurações de Traços (Barras)
     fig.update_traces(
         marker_line_color='white',
         marker_line_width=1,
         opacity=0.9
     )
 
-    # Adicionar Rótulos de Valor na extremidade de cada barra
+    # Valores totais ao lado das barras
     for _, row in df_ranking.iterrows():
         fig.add_annotation(
-            y=row['UNIDADE'], 
-            x=row['VALOR_NUM'],
+            y=row['UNIDADE'], x=row['VALOR_NUM'],
             text=f" <b>{br_money(row['VALOR_NUM'])}</b>",
-            showarrow=False, 
-            xanchor='left', 
-            font=dict(size=12, color="#2c3e50")
+            showarrow=False, xanchor='left', font=dict(size=12, color="#2c3e50")
         )
 
-    # Layout Profissional
     fig.update_layout(
         title={
-            'text': f"<b>RANKING DE INVESTIMENTO POR UNIDADE</b><br><span style='font-size:14px;color:grey;'>Período: {d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}</span>",
+            'text': f"<b>RANKING CONSOLIDADO DE GASTOS</b><br><span style='font-size:14px;color:grey;'>Período: {d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}</span>",
             'y':0.95, 'x':0.05, 'xanchor': 'left', 'yanchor': 'top'
         },
-        paper_bgcolor="white", 
-        plot_bgcolor="white",
         height=max(500, len(unidades_ordem) * 45),
-        margin=dict(l=200, r=120, t=100, b=100),
-        xaxis=dict(title="Total Investido (R$)", showgrid=True, gridcolor='whitesmoke'),
-        yaxis=dict(title="", tickfont=dict(size=12, color='black')),
+        margin=dict(l=200, r=130, t=100, b=100),
+        xaxis=dict(title="Investimento Total (R$)", showgrid=True, gridcolor='whitesmoke'),
+        yaxis=dict(title="", tickfont=dict(size=12)),
         legend=dict(title="Origem", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         annotations=[dict(
             x=0.5, y=-0.15, xref="paper", yref="paper",
@@ -203,7 +193,7 @@ def app():
     if fig_ranking:
         st.plotly_chart(fig_ranking, use_container_width=True)
     else:
-        st.warning("Não há dados para os filtros selecionados.")
+        st.warning("Não há dados (Pedidos 1.1M-1.3M ou Solicitações 300k-400k) neste período.")
 
     # 3. Envio de E-mail
     if st.button("📧 ENVIAR RELATÓRIO"):
@@ -212,19 +202,19 @@ def app():
             msg = MIMEMultipart()
             msg['Subject'] = f"Relatório Financeiro Saritur: {d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}"
             msg['From'], msg['To'] = user, "kerlesalves@gmail.com"
-            msg.attach(MIMEText("Segue anexo o ranking de investimentos consolidado.", 'plain'))
+            msg.attach(MIMEText("Segue anexo o relatório de investimentos.", 'plain'))
 
             if fig_ranking:
                 img = fig_ranking.to_image(format="png", width=1200, height=800)
                 part = MIMEImage(img)
-                part.add_header('Content-Disposition', 'attachment', filename="Ranking_Financeiro.png")
+                part.add_header('Content-Disposition', 'attachment', filename="Ranking.png")
                 msg.attach(part)
 
             with smtplib.SMTP('smtp.gmail.com', 587) as server:
                 server.starttls()
                 server.login(user, password)
                 server.send_message(msg)
-            st.success("Relatório enviado com sucesso!")
+            st.success("Relatório enviado!")
         except Exception as e:
             st.error(f"Erro no envio: {e}")
 
