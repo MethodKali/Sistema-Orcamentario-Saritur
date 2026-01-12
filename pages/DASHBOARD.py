@@ -25,9 +25,16 @@ except:
 
 def limpar_moeda(v):
     if pd.isna(v) or v == "": return 0.0
-    s = str(v).replace("R$", "").replace(" ", "").replace(".", "").replace(",", ".")
-    try: return float(s)
-    except: return 0.0
+    s = str(v).replace("R$", "").strip()
+    try:
+        # Trata formatos: 1.000,00 ou 1000.00 ou 1,000.00
+        if "," in s and "." in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif "," in s:
+            s = s.replace(",", ".")
+        return float(s)
+    except:
+        return 0.0
 
 def br_money(valor):
     """Formata número para o padrão de moeda brasileiro"""
@@ -69,11 +76,9 @@ def preparar_dados_consolidados(data_dict, d_inicio, d_fim):
         df_a.columns = [str(c).strip().upper() for c in df_a.columns]
         df_a['DATA_DT'] = pd.to_datetime(df_a['DATA'], dayfirst=True, errors='coerce').dt.date
         
-        # Lógica centralizada na coluna 'PEDIDO' (onde residem solicitações e pedidos)
         if 'PEDIDO' in df_a.columns:
             df_a['NUM_LOGICA'] = pd.to_numeric(df_a['PEDIDO'], errors='coerce')
             
-            # FILTRO: Data correta E (Número entre 300k-400k OU 1.1M-1.3M)
             mask = (
                 (df_a['DATA_DT'] >= d_inicio) & (df_a['DATA_DT'] <= d_fim)
             ) & (
@@ -81,11 +86,12 @@ def preparar_dados_consolidados(data_dict, d_inicio, d_fim):
                 ((df_a['NUM_LOGICA'] >= 1100000) & (df_a['NUM_LOGICA'] <= 1300000))
             )
             
-            df_filt = df_a.loc[mask]
+            df_filt = df_a.loc[mask].copy()
             if not df_filt.empty:
+                df_filt['VALOR_NUM'] = df_filt['VALOR'].apply(limpar_moeda)
                 lista_final.append(pd.DataFrame({
                     'UNIDADE': df_filt['UNIDADE'].astype(str).str.strip().str.upper(),
-                    'VALOR_NUM': df_filt['VALOR'].apply(limpar_moeda),
+                    'VALOR_NUM': df_filt['VALOR_NUM'],
                     'ORIGEM': 'ALTA'
                 }))
             
@@ -96,12 +102,13 @@ def preparar_dados_consolidados(data_dict, d_inicio, d_fim):
         df_e['DATA_DT'] = pd.to_datetime(df_e['DATA'], dayfirst=True, errors='coerce').dt.date
         
         mask = (df_e['DATA_DT'] >= d_inicio) & (df_e['DATA_DT'] <= d_fim)
-        df_filt = df_e.loc[mask]
+        df_filt = df_e.loc[mask].copy()
         
         if not df_filt.empty:
+            df_filt['VALOR_NUM'] = df_filt['VALOR'].apply(limpar_moeda)
             lista_final.append(pd.DataFrame({
                 'UNIDADE': df_filt['UNIDADE'].astype(str).str.strip().str.upper(),
-                'VALOR_NUM': df_filt['VALOR'].apply(limpar_moeda),
+                'VALOR_NUM': df_filt['VALOR_NUM'],
                 'ORIGEM': 'EMERGENCIAL'
             }))
             
@@ -111,52 +118,60 @@ def preparar_dados_consolidados(data_dict, d_inicio, d_fim):
 def gerar_grafico_ranking(df, d_ini, d_fim):
     if df.empty: return None
     
-    # Agrupar e Ordenar para o Ranking (Maiores em cima)
+    # Agrupamento para as partes da barra
     df_plot = df.groupby(['UNIDADE', 'ORIGEM'])['VALOR_NUM'].sum().reset_index()
-    df_ranking = df_plot.groupby('UNIDADE')['VALOR_NUM'].sum().sort_values(ascending=False).reset_index()
+    # Soma total por unidade para ordenar o ranking
+    df_ranking = df_plot.groupby('UNIDADE')['VALOR_NUM'].sum().sort_values(ascending=True).reset_index()
     unidades_ordem = df_ranking['UNIDADE'].tolist()
     
     total_geral = df_plot['VALOR_NUM'].sum()
 
+    # Criar gráfico empilhado
     fig = px.bar(
         df_plot, 
         y='UNIDADE', 
         x='VALOR_NUM', 
         color='ORIGEM',
         orientation='h',
-        color_discrete_map={'ALTA': '#1F4E79', 'EMERGENCIAL': '#C00000'},
+        color_discrete_map={'ALTA': '#1F4E79', 'EMERGENCIAL': '#942525'},
         category_orders={'UNIDADE': unidades_ordem},
-        template="plotly_white"
+        template="plotly_white",
+        text='VALOR_NUM' # Define o valor que será manipulado no texttemplate
     )
 
     fig.update_traces(
+        # Mostra o valor abreviado (Ex: 150k) dentro de cada pedaço da barra
+        texttemplate='%{x:,.2s}', 
+        textposition='inside',
+        insidetextanchor='middle',
         marker_line_color='white',
         marker_line_width=1,
         opacity=0.9
     )
 
-    # Valores totais ao lado das barras
+    # Adicionar Valor Total exato no final de cada barra composta
     for _, row in df_ranking.iterrows():
         fig.add_annotation(
             y=row['UNIDADE'], x=row['VALOR_NUM'],
             text=f" <b>{br_money(row['VALOR_NUM'])}</b>",
-            showarrow=False, xanchor='left', font=dict(size=12, color="#2c3e50")
+            showarrow=False, xanchor='left', font=dict(size=11, color="#333")
         )
 
     fig.update_layout(
         title={
-            'text': f"<b>RANKING CONSOLIDADO DE GASTOS</b><br><span style='font-size:14px;color:grey;'>Período: {d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}</span>",
+            'text': f"<b>RANKING FINANCEIRO CONSOLIDADO</b><br><span style='font-size:14px;color:grey;'>Período: {d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}</span>",
             'y':0.95, 'x':0.05, 'xanchor': 'left', 'yanchor': 'top'
         },
-        height=max(500, len(unidades_ordem) * 45),
-        margin=dict(l=200, r=130, t=100, b=100),
-        xaxis=dict(title="Investimento Total (R$)", showgrid=True, gridcolor='whitesmoke'),
-        yaxis=dict(title="", tickfont=dict(size=12)),
-        legend=dict(title="Origem", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=max(500, len(unidades_ordem) * 50),
+        margin=dict(l=200, r=150, t=100, b=120),
+        xaxis=dict(title="Investimento Acumulado (R$)", showgrid=True, gridcolor='whitesmoke'),
+        yaxis=dict(title=""),
+        legend=dict(title="Origem", orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1),
         annotations=[dict(
-            x=0.5, y=-0.15, xref="paper", yref="paper",
+            x=0.5, y=-0.18, xref="paper", yref="paper",
             text=f"<b>INVESTIMENTO TOTAL NO PERÍODO: {br_money(total_geral)}</b>",
-            showarrow=False, font=dict(size=18, color="#106332")
+            showarrow=False, font=dict(size=20, color="#106332"),
+            bgcolor="rgba(255,255,255,0.6)"
         )]
     )
     return fig
@@ -192,10 +207,16 @@ def app():
     
     if fig_ranking:
         st.plotly_chart(fig_ranking, use_container_width=True)
+        
+        # Tabela de Conferência (Para validação rápida)
+        with st.expander("🔍 Ver Detalhes Brutos do Período"):
+            df_check = df_cons.groupby(['ORIGEM'])['VALOR_NUM'].sum().reset_index()
+            df_check['VALOR_FORMATADO'] = df_check['VALOR_NUM'].apply(br_money)
+            st.table(df_check[['ORIGEM', 'VALOR_FORMATADO']])
     else:
         st.warning("Não há dados (Pedidos 1.1M-1.3M ou Solicitações 300k-400k) neste período.")
 
-    # 3. Envio de E-mail
+    # 3. Envio de E-mail (Mantido conforme original)
     if st.button("📧 ENVIAR RELATÓRIO"):
         try:
             user, password = st.secrets["email_user"], st.secrets["email_password"]
