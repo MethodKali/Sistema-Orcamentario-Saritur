@@ -34,6 +34,7 @@ def limpar_moeda(v):
         return 0.0
 
 def br_money(valor):
+    """Formata número para o padrão de moeda brasileiro R$ 0.000,00"""
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def preparar_tabela_amanha(df_alta_orig):
@@ -105,74 +106,58 @@ def preparar_dados_consolidados(data_dict, d_inicio, d_fim):
 def gerar_grafico_ranking(df, d_ini, d_fim):
     if df.empty: return None
     
-    # Pivotar os dados para ter colunas separadas por ORIGEM para cada UNIDADE
+    # Agrupa e pivota
     df_pivot = df.groupby(['UNIDADE', 'ORIGEM'])['VALOR_NUM'].sum().unstack(fill_value=0).reset_index()
     
-    # Adicionar coluna de Total para ranqueamento
-    df_pivot['TOTAL'] = df_pivot.get('ALTA', 0) + df_pivot.get('EMERGENCIAL', 0)
+    # Garante que as colunas existam para evitar o erro do "get"
+    if 'ALTA' not in df_pivot.columns: df_pivot['ALTA'] = 0.0
+    if 'EMERGENCIAL' not in df_pivot.columns: df_pivot['EMERGENCIAL'] = 0.0
+    
+    df_pivot['TOTAL'] = df_pivot['ALTA'] + df_pivot['EMERGENCIAL']
     df_pivot = df_pivot.sort_values(by='TOTAL', ascending=True)
     
     total_geral = df_pivot['TOTAL'].sum()
 
     fig = go.Figure()
 
-    # Barra de ALTA (em cima)
+    # Barra de ALTA (superior)
     fig.add_trace(go.Bar(
-        y=df_pivot['UNIDADE'],
-        x=df_pivot.get('ALTA', 0),
-        name='ALTA',
-        orientation='h',
+        y=df_pivot['UNIDADE'], x=df_pivot['ALTA'],
+        name='ALTA', orientation='h',
         marker=dict(color='#1F4E79'),
-        text=[br_money(v) if v > 0 else "" for v in df_pivot.get('ALTA', 0)],
-        textposition='inside',
-        insidetextanchor='end',
-        textfont=dict(color='white', size=10)
+        text=[br_money(v) if v > 0 else "" for v in df_pivot['ALTA']],
+        textposition='inside', insidetextanchor='end'
     ))
 
-    # Barra de EMERGENCIAL (logo abaixo da ALTA para a mesma unidade)
+    # Barra de EMERGENCIAL (inferior)
     fig.add_trace(go.Bar(
-        y=df_pivot['UNIDADE'],
-        x=df_pivot.get('EMERGENCIAL', 0),
-        name='EMERGENCIAL',
-        orientation='h',
+        y=df_pivot['UNIDADE'], x=df_pivot['EMERGENCIAL'],
+        name='EMERGENCIAL', orientation='h',
         marker=dict(color='#942525'),
-        text=[br_money(v) if v > 0 else "" for v in df_pivot.get('EMERGENCIAL', 0)],
-        textposition='inside',
-        insidetextanchor='end',
-        textfont=dict(color='white', size=10)
+        text=[br_money(v) if v > 0 else "" for v in df_pivot['EMERGENCIAL']],
+        textposition='inside', insidetextanchor='end'
     ))
 
-    # Ajustes de Layout para o estilo Rankeado com barras agrupadas por unidade
     fig.update_layout(
         template="plotly_dark",
-        barmode='group', # Isso coloca uma barra ao lado/abaixo da outra para a mesma unidade
-        bargap=0.15,
-        bargroupgap=0.05,
-        title=dict(
-            text=f"<b>RANKING DE INVESTIMENTOS POR UNIDADE</b><br><span style='font-size:12px;color:gray;'>{d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}</span>",
-            x=0.05, y=0.95
-        ),
-        height=max(600, len(df_pivot) * 60),
+        barmode='group',
+        bargap=0.2,
+        title=f"<b>RANKING FINANCEIRO CONSOLIDADO</b><br><span style='font-size:12px;'>Período: {d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}</span>",
+        height=max(500, len(df_pivot) * 60),
         margin=dict(l=200, r=50, t=100, b=100),
-        xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', title="Valor Acumulado (R$)"),
-        yaxis=dict(title="", tickfont=dict(size=11)),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', visible=False),
         paper_bgcolor='#0E1117',
         plot_bgcolor='#0E1117',
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
 
-    # Adicionar anotação do Total Geral
-    fig.add_annotation(
-        xref="paper", yref="paper",
-        x=0.5, y=-0.1,
-        text=f"<b>INVESTIMENTO TOTAL: {br_money(total_geral)}</b>",
-        showarrow=False,
-        font=dict(size=18, color="#00FF7F"),
-        bgcolor="rgba(0,0,0,0.5)",
-        bordercolor="#00FF7F",
-        borderwidth=1,
-        borderpad=10
-    )
+    # Label de valor TOTAL à direita
+    for _, row in df_pivot.iterrows():
+        fig.add_annotation(
+            y=row['UNIDADE'], x=row['TOTAL'],
+            text=f" <b>{br_money(row['TOTAL'])}</b>",
+            showarrow=False, xanchor='left', font=dict(color="#00FF7F", size=12)
+        )
 
     return fig
 
@@ -186,24 +171,15 @@ def enviar_relatorio_email(fig, d_ini, d_fim, total_valor):
 
         msg = MIMEMultipart()
         msg['Subject'] = f"Relatório Financeiro Saritur: {d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}"
-        msg['From'] = user
-        msg['To'] = destinatario
+        msg['From'], msg['To'] = user, destinatario
 
-        corpo = f"""
-        Olá, segue o resumo financeiro consolidado:
-        
-        Período: {d_ini.strftime('%d/%m/%Y')} até {d_fim.strftime('%d/%m/%Y')}
-        Total Investido: {br_money(total_valor)}
-        
-        O gráfico detalhado com o ranking por unidade segue em anexo.
-        """
+        corpo = f"Segue anexo o ranking de investimentos ({d_ini.strftime('%d/%m')} a {d_fim.strftime('%d/%m')}).\nTotal: {br_money(total_valor)}"
         msg.attach(MIMEText(corpo, 'plain'))
 
-        # Gerar imagem mantendo o fundo escuro e estilo do Streamlit
+        # Exportação mantendo fundo para visualização profissional
         img_bytes = fig.to_image(format="png", width=1200, height=max(800, fig.layout.height), scale=2)
-        
         part = MIMEImage(img_bytes)
-        part.add_header('Content-Disposition', 'attachment', filename="ranking_financeiro.png")
+        part.add_header('Content-Disposition', 'attachment', filename="ranking.png")
         msg.attach(part)
 
         with smtplib.SMTP('smtp.gmail.com', 587) as server:
@@ -212,7 +188,7 @@ def enviar_relatorio_email(fig, d_ini, d_fim, total_valor):
             server.send_message(msg)
         return True
     except Exception as e:
-        st.sidebar.error(f"Erro ao enviar: {e}")
+        st.sidebar.error(f"Erro: {e}")
         return False
 
 # --- APP PRINCIPAL ---
@@ -231,18 +207,16 @@ def app():
     data_dict = load_data(PLANILHA_NOME)
     
     # 1. Tabela de Amanhã
-    df_alta_raw = data_dict.get('ALTA', pd.DataFrame())
-    df_amanha = preparar_tabela_amanha(df_alta_raw)
-    
-    st.subheader(f"📋 Programação para Amanhã ({(hoje + timedelta(days=1)).strftime('%d/%m/%Y')})")
+    df_amanha = preparar_tabela_amanha(data_dict.get('ALTA', pd.DataFrame()))
+    st.subheader(f"📅 Programação para Amanhã ({(hoje + timedelta(days=1)).strftime('%d/%m/%Y')})")
     if not df_amanha.empty:
         st.dataframe(df_amanha, use_container_width=True, hide_index=True)
     else:
-        st.info("Sem registros para amanhã.")
+        st.info("Sem programação para amanhã.")
 
     st.markdown("---")
     
-    # 2. Gráfico e Resumo
+    # 2. Gráfico
     df_cons = preparar_dados_consolidados(data_dict, d_ini, d_fim)
     fig = gerar_grafico_ranking(df_cons, d_ini, d_fim)
     
@@ -252,11 +226,11 @@ def app():
         if fig:
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.warning("Dados não encontrados para o período.")
+            st.warning("Sem dados no período.")
             
     with col_met:
         if not df_cons.empty:
-            st.subheader("Resumo por Categoria")
+            st.subheader("Resumo")
             resumo = df_cons.groupby('ORIGEM')['VALOR_NUM'].sum()
             for origem, valor in resumo.items():
                 st.metric(origem, br_money(valor))
@@ -264,12 +238,10 @@ def app():
             total_geral = df_cons['VALOR_NUM'].sum()
             st.metric("TOTAL GERAL", br_money(total_geral))
 
-            st.sidebar.markdown("---")
             if st.sidebar.button("📧 ENVIAR RELATÓRIO"):
-                with st.sidebar.status("Enviando e-mail..."):
+                with st.sidebar.status("Enviando..."):
                     sucesso = enviar_relatorio_email(fig, d_ini, d_fim, total_geral)
-                if sucesso:
-                    st.sidebar.success("Enviado com sucesso!")
+                if sucesso: st.sidebar.success("Relatório enviado!")
 
 if __name__ == "__main__":
     app()
