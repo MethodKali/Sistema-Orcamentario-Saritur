@@ -11,7 +11,7 @@ PLANILHA_NOME = "Controle Orçamentário Diário V2"
 COLUNAS_DADOS = ['PEDIDO', 'DATA', 'CARRO | UTILIZAÇÃO', 'STATUS']
 COLUNA_CARRO = 'CARRO | UTILIZAÇÃO' 
 
-ABAS_A_BUSCAR = ['ALTA', 'EMERGENCIAL', 'GERAL_EMERGENCIAL']
+ABAS_A_BUSCAR = ['2026', 'EMERGENCIAL', 'GERAL_EMERGENCIAL']
 
 GOOGLE_SHEET_SCOPES = [
     "https://spreadsheets.google.com/feeds",
@@ -237,3 +237,5 @@ def app():
 
 if __name__ == '__main__':
     app()
+
+#fim
