@@ -77,7 +77,7 @@ def load_sheets(today_str):
             return safe_load(df)
         except: return pd.DataFrame()
 
-    return load_sheet_as_df("ALTA"), load_sheet_as_df("EMERGENCIAL"), load_sheet_as_df(calculate_backup_sheet_name()), load_sheet_as_df("GERAL_EMERGENCIAL")
+    return load_sheet_as_df("2026"), load_sheet_as_df("EMERGENCIAL"), load_sheet_as_df(calculate_backup_sheet_name()), load_sheet_as_df("GERAL_EMERGENCIAL")
 
 def show_result(row, sheet_name):
     """Apresentação clássica vertical das informações do pedido."""
@@ -113,13 +113,13 @@ total_alta = df_alta[(df_alta[COL_DATA] >= pd.to_datetime(start_date)) & (df_alt
 total_emerg_combinado = pd.concat([df_emerg, df_geral_emerg], ignore_index=True)
 total_emerg = total_emerg_combinado[(total_emerg_combinado[COL_DATA] >= pd.to_datetime(start_date)) & (total_emerg_combinado[COL_DATA] <= pd.to_datetime(end_date))][COL_VALOR].sum()
 
-st.sidebar.success(f"ALTA: {br_money(total_alta)}")
+st.sidebar.success(f"2026: {br_money(total_alta)}")
 st.sidebar.success(f"EMERGENCIAL TOTAL: {br_money(total_emerg)}")
 
 # CORPO PRINCIPAL
 st.title("Sistema de Consulta de Pedidos – Saritur")
 BACKUP_NAME = calculate_backup_sheet_name()
-st.info(f"Bases: ALTA, EMERGENCIAL, GERAL_EMERGENCIAL e BACKUP ({BACKUP_NAME})")
+st.info(f"Bases: 2026, EMERGENCIAL, GERAL_EMERGENCIAL e BACKUP ({BACKUP_NAME})")
 
 st.subheader("🔍 Situação da Solicitação/Pedido")
 current_key = f"input_{st.session_state.input_reset_counter}"
@@ -131,7 +131,7 @@ if pedido_input:
     
     # Lista de bases para iteração de busca
     bases_busca = [
-        (df_alta, "ALTA"), 
+        (df_alta, "2026"), 
         (df_emerg, "EMERGENCIAL"), 
         (df_geral_emerg, "GERAL_EMERGENCIAL"), 
         (df_backup, f"BACKUP {BACKUP_NAME}")
@@ -164,10 +164,10 @@ if data_busca:
     emerg_f = emerg_f[emerg_f[COL_DATA] == dt] if not emerg_f.empty else pd.DataFrame()
     
     c1, c2 = st.columns(2)
-    c1.metric("ALTA", br_money(alta_f[COL_VALOR].sum()), delta="Limite 180k" if alta_f[COL_VALOR].sum() > 180000 else None)
+    c1.metric("2026", br_money(alta_f[COL_VALOR].sum()), delta="Limite 180k" if alta_f[COL_VALOR].sum() > 180000 else None)
     c2.metric("EMERGENCIAL", br_money(emerg_f[COL_VALOR].sum()), delta="Limite 15k" if emerg_f[COL_VALOR].sum() > 15000 else None)
 
-    for df_graf, titulo, cor in [(alta_f, "🟦 Top 10 ALTA", "blue"), (emerg_f, "🟥 Top 10 EMERGENCIAL", "red")]:
+    for df_graf, titulo, cor in [(alta_f, "🟦 Top 10 2026", "blue"), (emerg_f, "🟥 Top 10 EMERGENCIAL", "red")]:
         if not df_graf.empty:
             st.write(f"### {titulo}")
             top = df_graf.sort_values(by=COL_VALOR, ascending=False).head(10).copy()
