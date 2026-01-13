@@ -7,306 +7,82 @@ import pytz
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import date, timedelta
-import calendar 
-import json
 
 # --- CONFIGURAÇÃO DE ACESSO E LIMITES ---
-SCOPE = [
-    "https://spreadsheets.google.com/feeds",
-    "https://www.googleapis.com/auth/drive",
-]
-# Substitua pelo caminho real do seu arquivo de credenciais se ele não for carregado
+SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 CREDS_FILE = "acesso.json" 
 SPREADSHEET_ID = "1X9trwwqVCwPXY2_O667WJcOR4CHNYbBjJDVsrYNZSgc"     
 LIMITE_ALTA_DIARIO = 180000.00
 LIMITE_EMERG_DIARIO = 15000.00
 
-# ----------------------------------------------------------------------
 # MAPA DE COLUNAS
-# ----------------------------------------------------------------------
-COL_PEDIDO = "PEDIDO"
-COL_STATUS = "STATUS"
-COL_DATA = "DATA"
-COL_VALOR = "VALOR"
-COL_UNIDADE = "UNIDADE"
-COL_CARRO = "CARRO | UTILIZAÇÃO"
+COL_PEDIDO, COL_STATUS, COL_DATA = "PEDIDO", "STATUS", "DATA"
+COL_VALOR, COL_UNIDADE, COL_CARRO = "VALOR", "UNIDADE", "CARRO | UTILIZAÇÃO"
 COL_FORNECEDOR = "FORNECEDOR"
 
-# -----------------------
-# FUNÇÕES DE VALOR E FORMATAÇÃO (Mantidas)
-# -----------------------
-
+# --- FUNÇÕES DE UTILIDADE ---
 def valor_brasileiro(valor):
-    if pd.isna(valor) or valor is None:
-        return 0.0
-    
+    if pd.isna(valor) or valor is None: return 0.0
     s = str(valor).strip()
-    s = re.sub(r"[R$\s\.]", "", s)
-    s = s.replace(",", ".")
-    
-    try:
-        return float(s)
-    except ValueError:
-        return 0.0
+    s = re.sub(r"[R$\s\.]", "", s).replace(",", ".")
+    try: return float(s)
+    except: return 0.0
 
 def br_money(valor):
-    if pd.isna(valor):
-        return "R$ 0,00"
+    if pd.isna(valor): return "R$ 0,00"
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
 
 def safe_load(df):
     df = df.copy()
-    
-    date_cols_to_process = [c for c in [COL_DATA] if c in df.columns]
-
-    for col in date_cols_to_process:
-        df[col] = pd.to_datetime(df[col], dayfirst=True, errors="coerce") 
-        df[col] = df[col].dt.normalize()  
-
+    if COL_DATA in df.columns:
+        df[COL_DATA] = pd.to_datetime(df[COL_DATA], dayfirst=True, errors="coerce").dt.normalize()
+        df = df[pd.notna(df[COL_DATA])].copy()
     if COL_VALOR in df.columns:
         df[COL_VALOR] = df[COL_VALOR].apply(valor_brasileiro)
-    
-    if COL_DATA in df.columns:
-        df = df[pd.notna(df[COL_DATA])].copy()
-
     return df
 
-# -----------------------
-# FUNÇÃO DE CÁLCULO DO NOME DA ABA DE BACKUP (ALTERADO APENAS A LÓGICA)
-# -----------------------
-
-def calculate_backup_sheet_name() -> str:
-    """Calcula o nome da aba da semana passada completa (Segunda a Sexta)."""
+def calculate_backup_sheet_name():
     today = date.today()
-    # Encontra a segunda-feira da semana anterior à atual
     monday_last_week = today - timedelta(days=today.weekday() + 7)
-    # Encontra a sexta-feira daquela mesma semana
     friday_last_week = monday_last_week + timedelta(days=4)
-    
     return f"{monday_last_week.strftime('%d.%m')} a {friday_last_week.strftime('%d.%m')}"
-
-
-# -----------------------
-# FUNÇÃO DE CARREGAMENTO DE DADOS (MANTIDA)
-# -----------------------
 
 @st.cache_data(ttl=300)
 def load_sheets(today_str):
-    gc = None
     try:
         creds_json = st.secrets.get("google_sheets_service_account")
-        
-        if creds_json:
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(creds_json), SCOPE)
-            gc = gspread.authorize(creds)
-        else:
-            creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, SCOPE)
-            gc = gspread.authorize(creds)
-            
-    except Exception as e:
-        st.error(f"Erro ao autenticar credenciais. Erro: {e}")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-    
-    try:
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(creds_json), SCOPE) if creds_json else ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, SCOPE)
+        gc = gspread.authorize(creds)
         sh = gc.open_by_key(SPREADSHEET_ID)
-    except Exception as e:
-        st.error(f"Erro ao abrir a planilha. Verifique o ID e as credenciais. Erro: {e}")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-
+    except: return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     def load_sheet_as_df(sheet_name):
         try:
-            data = sh.worksheet(sheet_name).get_all_values() 
+            data = sh.worksheet(sheet_name).get_all_values()
+            if len(data) < 2: return pd.DataFrame()
+            
             raw_headers = [h.strip().upper() for h in data[1]]
-            seen_headers = {}
-            unique_headers = []
-            
-            for header in raw_headers:
-                clean_header = header if header else ""
-                if clean_header in seen_headers:
-                    seen_headers[clean_header] += 1
-                    unique_headers.append(f"{clean_header}_{seen_headers[clean_header]}") 
+            final_headers = []
+            counts = {}
+            for h in raw_headers:
+                name = h if h else "VAZIO"
+                if name in counts:
+                    counts[name] += 1
+                    final_headers.append(f"{name}_{counts[name]}")
                 else:
-                    seen_headers[clean_header] = 0
-                    unique_headers.append(clean_header)
+                    counts[name] = 0
+                    final_headers.append(name)
             
-            df = pd.DataFrame(data[2:], columns=unique_headers)
-            df.replace('', pd.NA, inplace=True)
-            df.dropna(how='all', inplace=True) 
-            
-            return safe_load(df) 
-        
-        except gspread.WorksheetNotFound:
-            return pd.DataFrame()
-        except Exception as e:
-            st.error(f"Erro ao carregar aba {sheet_name}. Erro: {e}")
-            return pd.DataFrame()
+            df = pd.DataFrame(data[2:], columns=final_headers)
+            return safe_load(df)
+        except: return pd.DataFrame()
 
-    df_alta = load_sheet_as_df("ALTA")
-    df_emerg = load_sheet_as_df("EMERGENCIAL")
-    
-    BACKUP_SHEET_NAME = calculate_backup_sheet_name()
-    df_backup = load_sheet_as_df(BACKUP_SHEET_NAME)
-
-    return df_alta, df_emerg, df_backup
-
-
-def sum_between(df, start, end, status_filtro=None):
-    if df.empty or COL_DATA not in df.columns or COL_VALOR not in df.columns:
-        return 0.0
-    
-    end_date_normalized = pd.to_datetime(end).normalize() + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-    mask = (df[COL_DATA] >= pd.to_datetime(start).normalize()) & (df[COL_DATA] <= end_date_normalized)
-    
-    # Lógica de filtro adicionada
-    df_temp = df.loc[mask].copy()
-    if status_filtro and COL_STATUS in df_temp.columns:
-        df_temp = df_temp[df_temp[COL_STATUS].astype(str).str.strip().str.upper() == status_filtro.upper()]
-        
-    return df_temp[COL_VALOR].sum()
-
-
-# -----------------------
-# APP STREAMLIT - INÍCIO DA SIDEBAR E CARREGAMENTO
-# -----------------------
-st.sidebar.image("saritur1.png")
-
-SAO_PAULO_TZ = pytz.timezone('America/Sao_Paulo')
-today_date_tz = datetime.datetime.now(SAO_PAULO_TZ).date()
-today_date_str = today_date_tz.isoformat() 
-
-if st.sidebar.button("🔄 Recarregar Dados"):
-    st.cache_data.clear()
-    st.success("Cache limpo! Recarregando dados...")
-    
-df_alta, df_emerg, df_backup = load_sheets(today_date_str)
-
-
-# ----------------------------------------------------
-# 3. FILTRO PERSONALIZADO POR INTERVALO (MANTIDO)
-# ----------------------------------------------------
-st.sidebar.markdown("---") 
-st.sidebar.header("📊 Filtro por período")
-
-start_date = st.sidebar.date_input("Data inicial", datetime.date.today() - datetime.timedelta(days=30))
-end_date = st.sidebar.date_input("Data final", datetime.date.today())
-
-# Logica de filtro aplicada na Sidebar:
-total_alta = sum_between(df_alta, start_date, end_date, status_filtro="PEDIDO")
-total_emerg = sum_between(df_emerg, start_date, end_date)
-
-st.sidebar.markdown("### 💵 Totais filtrados:")
-st.sidebar.success(f"ALTA: {br_money(total_alta)}") 
-st.sidebar.success(f"EMERGENCIAL: {br_money(total_emerg)}")
-
-
-# ----------------------------------------------------
-# 4. LÓGICA DE ALERTAS DE STATUS (ALTERADO APENAS A LÓGICA DE FILTRO)
-# ----------------------------------------------------
-
-st.sidebar.markdown("---") 
-st.sidebar.markdown("### 🔔 Alertas de Status - ALTA")
-
-# Datas
-hoje = pd.to_datetime(today_date_tz).normalize() 
-data_amanha = hoje + datetime.timedelta(days=1)
-data_amanha_br = data_amanha.strftime('%d/%m') 
-
-qtde_nao_aprovada_total = 0 
-qtde_nao_aprovada_amanha = 0
-qtde_aprovada_total = 0 
-qtde_aprovada_amanha = 0
-
-if COL_STATUS in df_alta.columns and COL_DATA in df_alta.columns:
-    
-    df_alta["STATUS_CLEAN"] = df_alta[COL_STATUS].astype(str).str.strip().str.upper()
-    df_alta['DATA_ONLY'] = df_alta[COL_DATA].dt.normalize()
-
-    # 1. Base para 'Amanhã'
-    df_base_amanha = df_alta[
-        (df_alta['DATA_ONLY'] == data_amanha) & 
-        (pd.notna(df_alta['DATA_ONLY']))
-    ].copy()
-    
-    # 2. Base para 'Total Pendente' (Amanhã e dias seguintes)
-    # ALTERADO: Filtro >= para garantir o total futuro correto
-    df_base_total = df_alta[
-        (df_alta['DATA_ONLY'] >= data_amanha) & 
-        (pd.notna(df_alta['DATA_ONLY']))
-    ].copy()
-    
-    # Cálculos para NÃO APROVADAS
-    qtde_nao_aprovada_amanha = df_base_amanha[df_base_amanha["STATUS_CLEAN"] == "NÃO APROVADA"].shape[0]
-    qtde_nao_aprovada_total = df_base_total[df_base_total["STATUS_CLEAN"] == "NÃO APROVADA"].shape[0] 
-
-    # Cálculos para APROVADAS
-    qtde_aprovada_amanha = df_base_amanha[df_base_amanha["STATUS_CLEAN"] == "APROVADA"].shape[0]
-    qtde_aprovada_total = df_base_total[df_base_total["STATUS_CLEAN"] == "APROVADA"].shape[0] 
-
-
-# CONSTRUÇÃO E EXIBIÇÃO DOS ALERTAS
-mensagem_nao_aprovada = (
-    f"Existem **{qtde_nao_aprovada_total}** solicitações NÃO APROVADAS futuras, "
-    f"sendo **{qtde_nao_aprovada_amanha}** para amanhã ({data_amanha_br}). "
-    "**Favor atualizar a planilha!**"
-)
-st.sidebar.error(mensagem_nao_aprovada, icon="🚨")
-
-mensagem_aprovada = (
-    f"Existem **{qtde_aprovada_total}** solicitações APROVADAS futuras, "
-    f"sendo **{qtde_aprovada_amanha}** para amanhã ({data_amanha_br}). "
-    "Acompanhe o processo de PEDIDO e atualize a planilha!"
-)
-st.sidebar.warning(mensagem_aprovada, icon="⚠️")
-
-# ----------------------------------------------------
-# 5. RODAPÉ (MANTIDO)
-# ----------------------------------------------------
-
-st.sidebar.markdown("---") 
-
-st.sidebar.markdown(
-    """
-    <p style='font-size: 11px; color: #808489; text-align: center;'>
-    Desenvolvido por Kerles Alves - Ass. Suprimentos
-    </p>
-    """,
-    unsafe_allow_html=True
-)
-
-st.sidebar.markdown(
-    """
-    <p style='font-size: 11px; color: #808489; text-align: center;'>
-    Unidade Jardim Montanhês (BH) - Saritur Santa Rita Transporte Urbano e Rodoviário
-    </p>
-    """,
-    unsafe_allow_html=True
-)
-
-
-# -----------------------
-# CORPO PRINCIPAL DO APP (MANTIDO)
-# -----------------------
-
-st.title("Sistema de Consulta de Pedidos – *ALTA*, *EMERGENCIAL* e *BACKUP*")
-
-# Exibe o nome da aba de backup que está sendo rastreada
-try:
-    BACKUP_SHEET_NAME = calculate_backup_sheet_name()
-    st.info(f"Aba de Backup de Emergencial sendo rastreada: **{BACKUP_SHEET_NAME}**")
-except Exception:
-    pass 
-
-
-## 1) Pesquisa por Número de Pedido
-
-st.subheader("🔍 Situação da Solicitação/Pedido")
-pedido_input = st.text_input("Digite o número do pedido:")
+    return load_sheet_as_df("ALTA"), load_sheet_as_df("EMERGENCIAL"), load_sheet_as_df(calculate_backup_sheet_name()), load_sheet_as_df("GERAL_EMERGENCIAL")
 
 def show_result(row, sheet_name):
+    """Apresentação clássica vertical das informações do pedido."""
     st.write(f"📁 **Origem:** {sheet_name}") 
-    st.write(f"📅 **Previsão de pagamento:** {row.get(COL_DATA).strftime('%d/%m/%Y')}") 
+    st.write(f"📅 **Previsão de pagamento:** {row.get(COL_DATA).strftime('%d/%m/%Y') if pd.notna(row.get(COL_DATA)) else 'N/A'}") 
     st.write(f"📌 **Status:** {row.get(COL_STATUS)}")
     st.write(f"💰 **Valor:** {br_money(row.get(COL_VALOR))}")
     st.write(f"🏢 **Unidade solicitante:** {row.get(COL_UNIDADE)}")
@@ -314,139 +90,125 @@ def show_result(row, sheet_name):
     st.write(f"📦 **Fornecedor:** {row.get(COL_FORNECEDOR)}")
     st.write("---")
 
+# --- INÍCIO DO APP ---
+SAO_PAULO_TZ = pytz.timezone('America/Sao_Paulo')
+today_date_tz = datetime.datetime.now(SAO_PAULO_TZ).date()
+
+if 'input_reset_counter' not in st.session_state:
+    st.session_state.input_reset_counter = 0
+
+df_alta, df_emerg, df_backup, df_geral_emerg = load_sheets(today_date_tz.isoformat())
+
+# SIDEBAR
+st.sidebar.image("saritur1.png")
+if st.sidebar.button("🔄 Recarregar Dados"):
+    st.cache_data.clear()
+    st.rerun()
+
+st.sidebar.header("📊 Filtro por período")
+start_date = st.sidebar.date_input("Início", date.today() - timedelta(days=30))
+end_date = st.sidebar.date_input("Fim", date.today())
+
+total_alta = df_alta[(df_alta[COL_DATA] >= pd.to_datetime(start_date)) & (df_alta[COL_DATA] <= pd.to_datetime(end_date))][COL_VALOR].sum()
+total_emerg_combinado = pd.concat([df_emerg, df_geral_emerg], ignore_index=True)
+total_emerg = total_emerg_combinado[(total_emerg_combinado[COL_DATA] >= pd.to_datetime(start_date)) & (total_emerg_combinado[COL_DATA] <= pd.to_datetime(end_date))][COL_VALOR].sum()
+
+st.sidebar.success(f"ALTA: {br_money(total_alta)}")
+st.sidebar.success(f"EMERGENCIAL TOTAL: {br_money(total_emerg)}")
+
+# CORPO PRINCIPAL
+st.title("Sistema de Consulta de Pedidos – Saritur")
+BACKUP_NAME = calculate_backup_sheet_name()
+st.info(f"Bases: ALTA, EMERGENCIAL, GERAL_EMERGENCIAL e BACKUP ({BACKUP_NAME})")
+
+st.subheader("🔍 Situação da Solicitação/Pedido")
+current_key = f"input_{st.session_state.input_reset_counter}"
+pedido_input = st.text_input("Digite o número do pedido:", key=current_key)
 
 if pedido_input:
-    pid = pedido_input.strip().upper() 
+    pid = pedido_input.strip().upper()
+    found = False
     
-    def search_df(df, pid):
-        if COL_PEDIDO in df.columns and not df.empty:
-            return df[df[COL_PEDIDO].astype(str).str.strip().str.upper() == pid]
-        return pd.DataFrame()
-
-    res_alta = search_df(df_alta, pid)
-    res_emerg = search_df(df_emerg, pid)
-    res_backup = search_df(df_backup, pid) 
-
-    if res_alta.empty and res_emerg.empty and res_backup.empty:
+    # Lista de bases para iteração de busca
+    bases_busca = [
+        (df_alta, "ALTA"), 
+        (df_emerg, "EMERGENCIAL"), 
+        (df_geral_emerg, "GERAL_EMERGENCIAL"), 
+        (df_backup, f"BACKUP {BACKUP_NAME}")
+    ]
+    
+    for df, label in bases_busca:
+        if not df.empty and COL_PEDIDO in df.columns:
+            res = df[df[COL_PEDIDO].astype(str).str.strip().str.upper() == pid]
+            if not res.empty:
+                st.success(f"✅ Pedido encontrado na aba {label}")
+                show_result(res.iloc[0], label)
+                found = True
+    
+    if not found:
         st.warning(f"❌ Pedido '{pedido_input}' não encontrado em nenhuma aba.")
-    else:
-        if not res_alta.empty:
-            st.success("🟦 Pedido encontrado na aba ALTA")
-            show_result(res_alta.iloc[0], "ALTA")
+        
+    if st.button("Limpar Busca"):
+        st.session_state.input_reset_counter += 1
+        st.rerun()
 
-        if not res_emerg.empty:
-            st.success("🟥 Pedido encontrado na aba EMERGENCIAL")
-            show_result(res_emerg.iloc[0], "EMERGENCIAL")
-            
-        if not res_backup.empty:
-            st.info(f"🗄️ Pedido encontrado na aba de BACKUP: {BACKUP_SHEET_NAME}")
-            show_result(res_backup.iloc[0], BACKUP_SHEET_NAME)
-
-## 2) Pesquisa por Data
-
-st.subheader("📅 Buscar pedidos por data")
-data_busca = st.date_input("Selecione a data do pedido:", key="data_busca_2")  
+# PESQUISA POR DATA E GRÁFICOS
+st.divider()
+st.subheader("📅 Relatório Diário")
+data_busca = st.date_input("Selecione a data:", value=today_date_tz)
 
 if data_busca:
-    data_busca_dt = pd.to_datetime(data_busca).normalize()  
-
-    mask_alta = pd.notna(df_alta[COL_DATA]) & (df_alta[COL_DATA] == data_busca_dt)
-    alta_filtrado = df_alta[mask_alta].copy()
+    dt = pd.to_datetime(data_busca).normalize()
+    alta_f = df_alta[df_alta[COL_DATA] == dt] if not df_alta.empty else pd.DataFrame()
+    emerg_f = pd.concat([df_emerg, df_geral_emerg], ignore_index=True)
+    emerg_f = emerg_f[emerg_f[COL_DATA] == dt] if not emerg_f.empty else pd.DataFrame()
     
-    mask_emerg = pd.notna(df_emerg[COL_DATA]) & (df_emerg[COL_DATA] == data_busca_dt)
-    emerg_filtrado = df_emerg[mask_emerg].copy()
-    
-    # --- LOGICA DE SOMA ALTERADA AQUI ---
-    if not alta_filtrado.empty and COL_STATUS in alta_filtrado.columns:
-        total_valor_dia_alta = alta_filtrado[alta_filtrado[COL_STATUS].astype(str).str.strip().str.upper() == "PEDIDO"][COL_VALOR].sum()
-    else:
-        total_valor_dia_alta = 0.0
-        
-    total_valor_dia_emerg = emerg_filtrado[COL_VALOR].sum()
-    total_geral = total_valor_dia_alta + total_valor_dia_emerg
+    c1, c2 = st.columns(2)
+    c1.metric("ALTA", br_money(alta_f[COL_VALOR].sum()), delta="Limite 180k" if alta_f[COL_VALOR].sum() > 180000 else None)
+    c2.metric("EMERGENCIAL", br_money(emerg_f[COL_VALOR].sum()), delta="Limite 15k" if emerg_f[COL_VALOR].sum() > 15000 else None)
 
-    st.markdown(f"### 💰 Gastos Diários em {data_busca_dt.strftime('%d/%m/%Y')}")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown(f"**🟦 ALTA** (Limite: {br_money(LIMITE_ALTA_DIARIO)})")
-        st.metric(label="Gasto ALTA", value=br_money(total_valor_dia_alta))
-        if total_valor_dia_alta > LIMITE_ALTA_DIARIO:
-            st.warning("⚠️ **Valor diário excedido.**", icon="🚨")
-        st.info(f"Pedidos encontrados: **{len(alta_filtrado)}**")
-
-    with col2:
-        st.markdown(f"**🟥 EMERGENCIAL** (Limite: {br_money(LIMITE_EMERG_DIARIO)})")
-        st.metric(label="Gasto EMERGENCIAL", value=br_money(total_valor_dia_emerg))
-        if total_valor_dia_emerg > LIMITE_EMERG_DIARIO:
-            st.warning("⚠️ **Valor diário excedido.**", icon="🚨")
-        st.info(f"Pedidos encontrados: **{len(emerg_filtrado)}**")
-        
-    st.markdown("  \n")
-    st.metric(label="💰 TOTAL GERAL DO DIA", value=br_money(total_geral))
-    st.markdown("---")
-
-    COLS_BASE = [COL_PEDIDO, COL_STATUS, COL_UNIDADE, COL_CARRO, COL_FORNECEDOR]
-
-    if not alta_filtrado.empty:
-        st.write("### 🟦 Pedidos da ALTA")
-        alta_show = alta_filtrado.copy()
-        alta_show[COL_VALOR] = alta_show[COL_VALOR].apply(br_money)
-        st.dataframe(alta_show[[COL_PEDIDO, COL_VALOR] + [c for c in COLS_BASE if c != COL_PEDIDO]], hide_index=True)
-        
-        # Gráfico Alta
-        top_alta = alta_filtrado.sort_values(by=COL_VALOR, ascending=False).head(10).copy()
-        top_alta['VALOR_TEXTO'] = top_alta[COL_VALOR].apply(br_money)
-        chart_bar_alta = alt.Chart(top_alta).mark_bar(color='rgb(66, 133, 244)').encode(
-            x=alt.X(COL_VALOR, title='', axis=None),
-            y=alt.Y(COL_PEDIDO, sort='-x', title=''),
-            tooltip=[COL_PEDIDO, alt.Tooltip(COL_VALOR, title='Valor')]
-        )
-        chart_text_alta = alt.Chart(top_alta).mark_text(align='left', baseline='middle', dx=5).encode(
-            x=alt.X(COL_VALOR), y=alt.Y(COL_PEDIDO, sort='-x'), text='VALOR_TEXTO'
-        )
-        st.altair_chart((chart_bar_alta + chart_text_alta).properties(height=300), use_container_width=True)
-
-    if not emerg_filtrado.empty:
-        st.write("### 🟥 Pedidos da EMERGENCIAL")
-        emerg_show = emerg_filtrado.copy()
-        emerg_show[COL_VALOR] = emerg_show[COL_VALOR].apply(br_money)
-        st.dataframe(emerg_show[[COL_PEDIDO, COL_VALOR] + [c for c in COLS_BASE if c != COL_PEDIDO]], hide_index=True)
-
-        # Gráfico Emergencial
-        top_emerg = emerg_filtrado.sort_values(by=COL_VALOR, ascending=False).head(10).copy()
-        top_emerg['VALOR_TEXTO'] = top_emerg[COL_VALOR].apply(br_money)
-        chart_bar_emerg = alt.Chart(top_emerg).mark_bar(color='red').encode(
-            x=alt.X(COL_VALOR, title='', axis=None),
-            y=alt.Y(COL_PEDIDO, sort='-x', title=''),
-            tooltip=[COL_PEDIDO, alt.Tooltip(COL_VALOR, title='Valor')]
-        )
-        chart_text_emerg = alt.Chart(top_emerg).mark_text(align='left', baseline='middle', dx=5).encode(
-            x=alt.X(COL_VALOR), y=alt.Y(COL_PEDIDO, sort='-x'), text='VALOR_TEXTO'
-        )
-        st.altair_chart((chart_bar_emerg + chart_text_emerg).properties(height=300), use_container_width=True)
-
-    if not alta_filtrado.empty or not emerg_filtrado.empty:
-        df_combinado = pd.concat([alta_filtrado, emerg_filtrado], ignore_index=True)
-        df_filtrado_pedido = df_combinado[df_combinado[COL_STATUS].astype(str).str.strip().str.upper() == "PEDIDO"].copy()
-        
-        if not df_filtrado_pedido.empty:
-            st.markdown("---")
-            st.subheader(f"🏢 Gasto por Unidade Suprida (Status: PEDIDO) em {data_busca_dt.strftime('%d/%m/%Y')}")
-            gastos_por_unidade = df_filtrado_pedido.groupby(COL_UNIDADE)[COL_VALOR].sum().reset_index()
-            gastos_show = gastos_por_unidade.sort_values(by=COL_VALOR, ascending=False)
+    for df_graf, titulo, cor in [(alta_f, "🟦 Top 10 ALTA", "blue"), (emerg_f, "🟥 Top 10 EMERGENCIAL", "red")]:
+        if not df_graf.empty:
+            st.write(f"### {titulo}")
+            top = df_graf.sort_values(by=COL_VALOR, ascending=False).head(10).copy()
+            top['VALOR_TEXTO'] = top[COL_VALOR].apply(br_money)
             
-            for index, row in gastos_show.iterrows():
-                st.markdown(
-                    f"""<div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #282828;">
-                        <span style='font-size: 15px; font-weight: 500; color: white;'>{row[COL_UNIDADE]}</span>
-                        <span style='font-size: 15px; font-weight: 500; color: #AAAAAA;'>{br_money(row[COL_VALOR])}</span>
-                    </div>""", unsafe_allow_html=True
-                ) 
+            chart = alt.Chart(top).mark_bar(color=cor).encode(
+                x=alt.X(COL_VALOR, axis=None), 
+                y=alt.Y(COL_PEDIDO, sort='-x', title="Pedido"),
+                tooltip=[COL_PEDIDO, 'VALOR_TEXTO']
+            )
+            text = chart.mark_text(align='left', dx=5).encode(text='VALOR_TEXTO')
+            st.altair_chart((chart + text).properties(height=300), use_container_width=True)
+            st.dataframe(df_graf[[COL_PEDIDO, COL_VALOR, COL_STATUS, COL_UNIDADE, COL_CARRO]], hide_index=True)
+# --- BLOCO DE GASTO POR UNIDADE (FORMATO TABELA ESTRUTURADA) ---
+    df_comb = pd.concat([alta_f, emerg_f], ignore_index=True)
+    if not df_comb.empty:
+        st.write("---")
+        st.subheader(f"🏢 Gasto por Unidade (Status: PEDIDO)")
+        
+        # 1. Filtra apenas status PEDIDO
+        df_p = df_comb[df_comb[COL_STATUS].astype(str).str.strip().str.upper() == "PEDIDO"].copy()
+        
+        if not df_p.empty:
+            # 2. PADRONIZAÇÃO: Remove acentos e espaços para agrupar corretamente
+            # Isso evita que "INDÚSTRIA" e "INDUSTRIA" apareçam separados
+            df_p[COL_UNIDADE] = df_p[COL_UNIDADE].astype(str).str.strip().str.upper()
+            df_p[COL_UNIDADE] = df_p[COL_UNIDADE].str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8')
+            
+            # 3. Agrupa e soma os valores
+            gastos = df_p.groupby(COL_UNIDADE)[COL_VALOR].sum().sort_values(ascending=False).reset_index()
+            
+            # 4. Formata os números para o padrão brasileiro de moeda
+            gastos_tabela = gastos.copy()
+            gastos_tabela.columns = ["UNIDADE", "TOTAL (R$)"]
+            gastos_tabela["TOTAL (R$)"] = gastos_tabela["TOTAL (R$)"].apply(br_money)
+            
+            # 5. EXIBIÇÃO: st.dataframe com use_container_width cria o visual de tabela do sistema
+            st.dataframe(
+                gastos_tabela, 
+                hide_index=True, 
+                use_container_width=True
+            )
         else:
-            st.info(f"Nenhum pedido com status 'PEDIDO' encontrado para calcular gastos por unidade em {data_busca_dt.strftime('%d/%m/%Y')}.")
-
-
-    else:
-        st.info(f"Nenhum pedido encontrado para calcular gastos por unidade em {data_busca_dt.strftime('%d/%m/%Y')}.")
+            st.info("Nenhum gasto com status 'PEDIDO' encontrado para esta data.")

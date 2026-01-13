@@ -27,10 +27,13 @@ def extrair_numeros_da_string(texto):
 def limpar_apenas_numeros(texto):
     return re.sub(r'\D', '', str(texto))
 
-def get_actual_next_row(ws):
-    return len(ws.col_values(3)) + 1
+def get_actual_next_row(ws, coluna_referencia=3):
+    """Retorna a próxima linha física baseada na coluna C (Data)"""
+    valores_coluna = ws.col_values(coluna_referencia)
+    return len(valores_coluna) + 1
 
 def scanner_duplicatas_globais(sh):
+    """Lógica original de verificação entre abas ALTA e EMERGENCIAL"""
     dados_alta = sh.worksheet("ALTA").get_all_values()[2:]
     dados_emerg = sh.worksheet("EMERGENCIAL").get_all_values()[2:]
     pedidos_alta = [limpar_apenas_numeros(r[5]) for r in dados_alta if len(r) > 5 and limpar_apenas_numeros(r[5])]
@@ -38,6 +41,7 @@ def scanner_duplicatas_globais(sh):
     return sorted(list(set(pedidos_alta).intersection(set(pedidos_emerg))))
 
 def buscar_em_todas_as_abas_detalhado(sh, lista_numeros):
+    """Sua lógica original de busca para validação antes do cadastro"""
     mapa_encontrados = {}
     dados_alta = sh.worksheet("ALTA").get_all_values()
     dados_emerg = sh.worksheet("EMERGENCIAL").get_all_values()
@@ -54,8 +58,9 @@ def buscar_em_todas_as_abas_detalhado(sh, lista_numeros):
     return mapa_encontrados
 
 def excluir_por_numero(sh, aba_nome, lista_numeros):
+    """Sua lógica original de remoção física de linhas"""
     ws = sh.worksheet(aba_nome)
-    col_idx = 6 if aba_nome == "ALTA" else 4
+    col_idx = 6 if aba_nome == "ALTA" else 4 # Coluna F na ALTA, D na EMERGENCIAL
     col_values = ws.col_values(col_idx)
     linhas_para_deletar = []
     for i, valor in enumerate(col_values):
@@ -67,67 +72,16 @@ def excluir_por_numero(sh, aba_nome, lista_numeros):
         return len(linhas_para_deletar)
     return 0
 
-# --- NOVA LÓGICA: LIMPEZA DE DUPLICATAS AUTOMÁTICA ---
-def limpar_todas_duplicatas(sh):
-    total_removido = 0
-    hoje = datetime.now().date()
-    detalhes_limpeza = [] # Para armazenar o resumo por aba
-    
-    for aba_nome in ["ALTA", "EMERGENCIAL"]:
-        ws = sh.worksheet(aba_nome)
-        dados = ws.get_all_values()
-        
-        idx_data = 2 if aba_nome == "ALTA" else 1
-        idx_item = 5 if aba_nome == "ALTA" else 3
-        
-        vistos = set()
-        linhas_para_excluir = []
-        removidos_nesta_aba = 0
-        
-        for i, linha in enumerate(dados):
-            if i < 2: continue 
-            if len(linha) > idx_item:
-                # 1. Filtro Temporal (Apenas hoje ou futuro)
-                data_str = linha[idx_data]
-                try:
-                    data_dt = datetime.strptime(data_str, "%d/%m/%Y").date()
-                    if data_dt < hoje: continue 
-                except: continue
-
-                # 2. Filtro de Intervalo Numérico
-                raw_num = limpar_apenas_numeros(linha[idx_item])
-                if not raw_num: continue
-                
-                num_int = int(raw_num)
-                is_solicitacao = 300000 <= num_int <= 400000
-                is_pedido = 1100000 <= num_int <= 1300000
-                
-                if is_solicitacao or is_pedido:
-                    # 3. Identificação de Duplicata
-                    if num_int in vistos:
-                        linhas_para_excluir.append(i + 1)
-                    else:
-                        vistos.add(num_int)
-        
-        if linhas_para_excluir:
-            for idx in sorted(linhas_para_excluir, reverse=True):
-                ws.delete_rows(idx)
-            removidos_nesta_aba = len(linhas_para_excluir)
-            total_removido += removidos_nesta_aba
-        
-        detalhes_limpeza.append(f"{aba_nome}: {removidos_nesta_aba}")
-            
-    return total_removido, ", ".join(detalhes_limpeza)
 # --- INÍCIO DO APP ---
 client = get_gspread_client()
 if not client: st.stop()
 sh = client.open_by_key(SPREADSHEET_ID)
 
-# SIDEBAR
+# --- SIDEBAR: SCANNER DE DUPLICATAS (RESTAURADO) ---
 st.sidebar.title("🔍 Scanner de Duplicatas")
 duplicas_globais = scanner_duplicatas_globais(sh)
 if duplicas_globais:
-    st.sidebar.warning(f"Existem {len(duplicas_globais)} duplicatas entre abas!")
+    st.sidebar.warning(f"Existem {len(duplicas_globais)} duplicatas!")
     if st.sidebar.button("Mostrar Lista"):
         for num in duplicas_globais: st.sidebar.code(num)
 else:
@@ -135,6 +89,7 @@ else:
 
 st.title("📝 Gestão de Pedidos e Solicitações")
 
+# Feedback de Mensagens
 if "mensagem_sucesso" in st.session_state:
     st.success(st.session_state.mensagem_sucesso)
     del st.session_state.mensagem_sucesso
@@ -148,7 +103,7 @@ with st.form("form_cadastro", clear_on_submit=True):
     col1, col2 = st.columns(2)
     with col1:
         data_cad = st.date_input("Data *", datetime.now())
-        unidade = st.selectbox("Unidade *", ["INDÚSTRIA", "JARDIM MONTANHÊS", "SÃO MARCOS", "NOVA LIMA", "ITAÚNA", "LAGOA SANTA", "DURVAL DE BARROS", "MONTES CLAROS", "VARGINHA", "NEVES", "LAVRAS", "IPATINGA", "VESPASIANO", "GARANTIA", "VENDA DE VEÍCULOS", "ADMINISTRATIVO", "PREDIO ADM", "EXPEDIÇÃO", "CEL. FABRICIANO", "OLIVEIRA", "MORRO ALTO", "TRANSNORTE", "TIMOTEO", "ADMINISTRAÇÃO"])
+        unidade = st.selectbox("Unidade *", ["INDUSTRIA", "JARDIM MONTANHÊS", "SÃO MARCOS", "NOVA LIMA", "ITAÚNA", "LAGOA SANTA", "DURVAL DE BARROS", "MONTES CLAROS", "VARGINHA", "NEVES", "LAVRAS", "IPATINGA", "VESPASIANO", "GARANTIA", "VENDA DE VEÍCULOS", "ADMINISTRATIVO", "PREDIO ADM", "EXPEDIÇÃO", "CEL. FABRICIANO", "OLIVEIRA", "MORRO ALTO", "TRANSNORTE", "TIMOTEO", "ADMINISTRAÇÃO"])
         carro = st.text_input("Carro | Utilização")
         fornecedor = st.text_input("Fornecedor")
     with col2:
@@ -166,11 +121,13 @@ if btn_cadastrar:
     p_nums = extrair_numeros_da_string(pedidos_raw)
     st.session_state.alertas_erro = []
     
+    # 1. EXCLUSÃO PRÉVIA (Lógica Original)
     msg_exc = ""
     if s_nums:
         qtd_rem = excluir_por_numero(sh, "ALTA", s_nums) + excluir_por_numero(sh, "EMERGENCIAL", s_nums)
         if qtd_rem > 0: msg_exc = f" ({qtd_rem} antigo(s) removido(s))"
 
+    # 2. DEFINIÇÃO DE ITENS PARA CADASTRAR
     if aba_dest == "ALTA" and status_selecionado == "PEDIDO":
         itens_para_validar = p_nums
     else:
@@ -182,15 +139,17 @@ if btn_cadastrar:
             st.rerun()
         st.stop()
 
+    # 3. VALIDAÇÃO DE DUPLICATAS (Lógica Original)
     mapa_geral = buscar_em_todas_as_abas_detalhado(sh, itens_para_validar)
     itens_finais = [i for i in itens_para_validar if i not in mapa_geral]
     for item in itens_para_validar:
         if item in mapa_geral: st.session_state.alertas_erro.append(f"❌ Item {item} já existe na aba {mapa_geral[item]}.")
 
+    # 4. INCLUSÃO REFORÇADA (ANTI-ESCADA)
     if itens_finais:
         ws = sh.worksheet(aba_dest)
         dt_str = data_cad.strftime("%d/%m/%Y")
-        prox_linha = get_actual_next_row(ws)
+        prox_linha = get_actual_next_row(ws, coluna_referencia=3)
         novas_linhas = []
 
         for i, item in enumerate(itens_finais):
@@ -198,43 +157,31 @@ if btn_cadastrar:
             if aba_dest == "ALTA":
                 status_item = status_selecionado if item in s_nums else "PEDIDO"
                 formula_dias = f'=IF(C{linha_atual}=""; ""; TODAY()-C{linha_atual})'
-                # [A:Vazio, B:Dias, C:Data, D:Unidade, E:Carro, F:Item, G:Valor, H:Fornecedor, I:Status]
+                # [A] Vazio, [B] Formula Dias, [C] Data, [D] Unidade, [E] Carro, [F] Item, [G] Valor, [H] Fornecedor, [I] Status
                 novas_linhas.append(["", formula_dias, dt_str, unidade, carro, item, valor, fornecedor, status_item])
             else:
+                # EMERGENCIAL: Unidade, Timestamp, Carro, Item, Valor, Fornecedor + colunas vazias
                 novas_linhas.append([unidade, datetime.now().strftime("%d/%m/%Y %H:%M:%S"), carro, item, valor, fornecedor, "", "", "", ""])
 
-        ws.append_rows(novas_linhas, value_input_option='USER_ENTERED')
+        # Update preciso para evitar o efeito escada
+        col_fim = "I" if aba_dest == "ALTA" else "J"
+        range_target = f"A{prox_linha}:{col_fim}{prox_linha + len(novas_linhas) - 1}"
+        ws.update(range_target, novas_linhas, value_input_option='USER_ENTERED')
+        
         st.session_state.mensagem_sucesso = f"✅ {len(novas_linhas)} itens adicionados.{msg_exc}"
     
     st.rerun()
 
-# --- FERRAMENTAS ---
+# --- EXCLUSÃO MANUAL (RESTAURADA) ---
 st.markdown("---")
-st.subheader("🛠️ Ferramentas de Manutenção")
-col_tools1, col_tools2 = st.columns(2)
-
-with col_tools1:
-    with st.expander("🗑️ Exclusão Manual"):
-        with st.form("form_exclusao", clear_on_submit=True):
-            aba_ex = st.selectbox("Aba", ["ALTA", "EMERGENCIAL"], key="man_aba")
-            txt_ex = st.text_area("Números para excluir")
-            if st.form_submit_button("EXCLUIR"):
-                n_ex = extrair_numeros_da_string(txt_ex)
-                if n_ex:
-                    qtd = excluir_por_numero(sh, aba_ex, n_ex)
-                    st.session_state.mensagem_sucesso = f"🗑️ {qtd} item(s) removidos."
-                    st.rerun()
-
-# --- NO BLOCO DO BOTÃO (DENTRO DA COL_TOOLS2) ---
-with col_tools2:
-    with st.expander("Sweep 🧹 Limpeza de Duplicatas"):
-        st.write("Foco: Hoje/Futuro | Pedidos (1.1M-1.3M) | Solicit. (300k-400k)")
-        if st.button("EXECUTAR LIMPEZA GERAL"):
-            with st.spinner("Analisando e limpando duplicatas atuais..."):
-                qtd, resumo = limpar_todas_duplicatas(sh)
-                if qtd > 0:
-                    termo = "duplicata removida" if qtd == 1 else "duplicatas removidas"
-                    st.session_state.mensagem_sucesso = f"✅ Sucesso! {qtd} {termo} ({resumo})."
-                else:
-                    st.info("Nenhuma duplicata atual encontrada para os critérios definidos.")
+st.subheader("🗑️ Exclusão Manual")
+with st.expander("Ferramentas"):
+    with st.form("form_exclusao", clear_on_submit=True):
+        aba_ex = st.selectbox("Aba", ["ALTA", "EMERGENCIAL"], key="man_aba")
+        txt_ex = st.text_area("Números para excluir")
+        if st.form_submit_button("EXCLUIR"):
+            n_ex = extrair_numeros_da_string(txt_ex)
+            if n_ex:
+                qtd = excluir_por_numero(sh, aba_ex, n_ex)
+                st.session_state.mensagem_sucesso = f"🗑️ {qtd} item(s) removidos."
                 st.rerun()
