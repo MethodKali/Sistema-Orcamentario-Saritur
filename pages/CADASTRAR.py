@@ -33,8 +33,8 @@ def get_actual_next_row(ws, coluna_referencia=3):
     return len(valores_coluna) + 1
 
 def scanner_duplicatas_globais(sh):
-    """Lógica original de verificação entre abas ALTA e EMERGENCIAL"""
-    dados_alta = sh.worksheet("ALTA").get_all_values()[2:]
+    """Lógica original de verificação entre abas 2026 e EMERGENCIAL"""
+    dados_alta = sh.worksheet("2026").get_all_values()[2:]
     dados_emerg = sh.worksheet("EMERGENCIAL").get_all_values()[2:]
     pedidos_alta = [limpar_apenas_numeros(r[5]) for r in dados_alta if len(r) > 5 and limpar_apenas_numeros(r[5])]
     pedidos_emerg = [limpar_apenas_numeros(r[3]) for r in dados_emerg if len(r) > 3 and limpar_apenas_numeros(r[3])]
@@ -43,12 +43,12 @@ def scanner_duplicatas_globais(sh):
 def buscar_em_todas_as_abas_detalhado(sh, lista_numeros):
     """Sua lógica original de busca para validação antes do cadastro"""
     mapa_encontrados = {}
-    dados_alta = sh.worksheet("ALTA").get_all_values()
+    dados_alta = sh.worksheet("2026").get_all_values()
     dados_emerg = sh.worksheet("EMERGENCIAL").get_all_values()
     for num in lista_numeros:
         for row in dados_alta[2:]:
             if len(row) > 5 and limpar_apenas_numeros(row[5]) == num:
-                mapa_encontrados[num] = "ALTA"
+                mapa_encontrados[num] = "2026"
                 break
         if num not in mapa_encontrados:
             for row in dados_emerg[2:]:
@@ -60,7 +60,7 @@ def buscar_em_todas_as_abas_detalhado(sh, lista_numeros):
 def excluir_por_numero(sh, aba_nome, lista_numeros):
     """Sua lógica original de remoção física de linhas"""
     ws = sh.worksheet(aba_nome)
-    col_idx = 6 if aba_nome == "ALTA" else 4 # Coluna F na ALTA, D na EMERGENCIAL
+    col_idx = 6 if aba_nome == "2026" else 4 # Coluna F na ALTA, D na EMERGENCIAL
     col_values = ws.col_values(col_idx)
     linhas_para_deletar = []
     for i, valor in enumerate(col_values):
@@ -97,7 +97,7 @@ if "alertas_erro" in st.session_state:
     for msg in st.session_state.alertas_erro: st.error(msg)
     del st.session_state.alertas_erro
 
-aba_dest = st.selectbox("Selecione a Aba de Destino", ["ALTA", "EMERGENCIAL"])
+aba_dest = st.selectbox("Selecione a Aba de Destino", ["2026", "EMERGENCIAL"])
 
 with st.form("form_cadastro", clear_on_submit=True):
     col1, col2 = st.columns(2)
@@ -109,7 +109,7 @@ with st.form("form_cadastro", clear_on_submit=True):
     with col2:
         valor = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
         status_selecionado = ""
-        if aba_dest == "ALTA":
+        if aba_dest == "2026":
             status_selecionado = st.selectbox("Status Solicitação *", ["COTAÇÃO", "PEDIDO", "APROVADA", "NÃO APROVADA"])
         solicitacao_raw = st.text_input("Nº Solicitação (Para busca/exclusão)")
         pedidos_raw = st.text_area("Bloco de Pedidos (Para cadastro)")
@@ -124,11 +124,11 @@ if btn_cadastrar:
     # 1. EXCLUSÃO PRÉVIA (Lógica Original)
     msg_exc = ""
     if s_nums:
-        qtd_rem = excluir_por_numero(sh, "ALTA", s_nums) + excluir_por_numero(sh, "EMERGENCIAL", s_nums)
+        qtd_rem = excluir_por_numero(sh, "2026", s_nums) + excluir_por_numero(sh, "EMERGENCIAL", s_nums)
         if qtd_rem > 0: msg_exc = f" ({qtd_rem} antigo(s) removido(s))"
 
     # 2. DEFINIÇÃO DE ITENS PARA CADASTRAR
-    if aba_dest == "ALTA" and status_selecionado == "PEDIDO":
+    if aba_dest == "2026" and status_selecionado == "PEDIDO":
         itens_para_validar = p_nums
     else:
         itens_para_validar = s_nums + p_nums
@@ -154,7 +154,7 @@ if btn_cadastrar:
 
         for i, item in enumerate(itens_finais):
             linha_atual = prox_linha + i
-            if aba_dest == "ALTA":
+            if aba_dest == "2026":
                 status_item = status_selecionado if item in s_nums else "PEDIDO"
                 formula_dias = f'=IF(C{linha_atual}=""; ""; TODAY()-C{linha_atual})'
                 # [A] Vazio, [B] Formula Dias, [C] Data, [D] Unidade, [E] Carro, [F] Item, [G] Valor, [H] Fornecedor, [I] Status
@@ -164,7 +164,7 @@ if btn_cadastrar:
                 novas_linhas.append([unidade, datetime.now().strftime("%d/%m/%Y %H:%M:%S"), carro, item, valor, fornecedor, "", "", "", ""])
 
         # Update preciso para evitar o efeito escada
-        col_fim = "I" if aba_dest == "ALTA" else "J"
+        col_fim = "I" if aba_dest == "2026" else "J"
         range_target = f"A{prox_linha}:{col_fim}{prox_linha + len(novas_linhas) - 1}"
         ws.update(range_target, novas_linhas, value_input_option='USER_ENTERED')
         
@@ -177,7 +177,7 @@ st.markdown("---")
 st.subheader("🗑️ Exclusão Manual")
 with st.expander("Ferramentas"):
     with st.form("form_exclusao", clear_on_submit=True):
-        aba_ex = st.selectbox("Aba", ["ALTA", "EMERGENCIAL"], key="man_aba")
+        aba_ex = st.selectbox("Aba", ["2026", "EMERGENCIAL"], key="man_aba")
         txt_ex = st.text_area("Números para excluir")
         if st.form_submit_button("EXCLUIR"):
             n_ex = extrair_numeros_da_string(txt_ex)
