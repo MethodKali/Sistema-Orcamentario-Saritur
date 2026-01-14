@@ -7,7 +7,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import os 
 
 # --- CONFIGURAÇÃO ---
-PLANILHA_NOME = "Cópia de Controle Orçamentário Diário V2 (1)" 
+PLANILHA_NOME = "Controle Orçamentário Diário V2" 
 COLUNAS_DADOS = ['PEDIDO', 'DATA', 'CARRO | UTILIZAÇÃO', 'STATUS']
 COLUNA_CARRO = 'CARRO | UTILIZAÇÃO' 
 

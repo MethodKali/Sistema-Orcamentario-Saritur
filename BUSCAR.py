@@ -11,7 +11,7 @@ from datetime import date, timedelta
 # --- CONFIGURAÇÃO DE ACESSO E LIMITES ---
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 CREDS_FILE = "acesso.json" 
-SPREADSHEET_ID = "1SApVV1c07gHyKpctJQbynSmbqUDa4uGBluBQqxRyOQE"     
+SPREADSHEET_ID = "1X9trwwqVCwPXY2_O667WJcOR4CHNYbBjJDVsrYNZSgc"     
 LIMITE_ALTA_DIARIO = 180000.00
 LIMITE_EMERG_DIARIO = 15000.00
 
