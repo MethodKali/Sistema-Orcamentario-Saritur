@@ -6,7 +6,7 @@ import re
 
 # --- CONFIGURAÇÕES ---
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-SPREADSHEET_ID = "1X9trwwqVCwPXY2_O667WJcOR4CHNYbBjJDVsrYNZSgc"
+SPREADSHEET_ID = "1SApVV1c07gHyKpctJQbynSmbqUDa4uGBluBQqxRyOQE"
 
 def get_gspread_client():
     try:
