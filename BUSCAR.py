@@ -11,7 +11,7 @@ from datetime import date, timedelta
 # --- CONFIGURAÇÃO DE ACESSO E LIMITES ---
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 CREDS_FILE = "acesso.json" 
-SPREADSHEET_ID = "1X9trwwqVCwPXY2_O667WJcOR4CHNYbBjJDVsrYNZSgc"     
+SPREADSHEET_ID = "1X9trwwqVCwPXY2_O667WJcOR4CHNYbBjJDVsrYNZSgc"      
 LIMITE_ALTA_DIARIO = 180000.00
 LIMITE_EMERG_DIARIO = 15000.00
 
@@ -54,7 +54,7 @@ def load_sheets(today_str):
         creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(creds_json), SCOPE) if creds_json else ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, SCOPE)
         gc = gspread.authorize(creds)
         sh = gc.open_by_key(SPREADSHEET_ID)
-    except: return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    except: return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     def load_sheet_as_df(sheet_name):
         try:
@@ -77,10 +77,10 @@ def load_sheets(today_str):
             return safe_load(df)
         except: return pd.DataFrame()
 
-    return load_sheet_as_df("2026"), load_sheet_as_df("EMERGENCIAL"), load_sheet_as_df(calculate_backup_sheet_name()), load_sheet_as_df("GERAL_EMERGENCIAL")
+    # Retorna agora 5 DataFrames (2026, 2025, EMERG, BACKUP, GERAL_EMERG)
+    return load_sheet_as_df("2026"), load_sheet_as_df("2025"), load_sheet_as_df("EMERGENCIAL"), load_sheet_as_df(calculate_backup_sheet_name()), load_sheet_as_df("GERAL_EMERGENCIAL")
 
 def show_result(row, sheet_name):
-    """Apresentação clássica vertical das informações do pedido."""
     st.write(f"📁 **Origem:** {sheet_name}") 
     st.write(f"📅 **Previsão de pagamento:** {row.get(COL_DATA).strftime('%d/%m/%Y') if pd.notna(row.get(COL_DATA)) else 'N/A'}") 
     st.write(f"📌 **Status:** {row.get(COL_STATUS)}")
@@ -97,7 +97,8 @@ today_date_tz = datetime.datetime.now(SAO_PAULO_TZ).date()
 if 'input_reset_counter' not in st.session_state:
     st.session_state.input_reset_counter = 0
 
-df_alta, df_emerg, df_backup, df_geral_emerg = load_sheets(today_date_tz.isoformat())
+# Recebendo as 5 abas
+df_2026, df_2025, df_emerg, df_backup, df_geral_emerg = load_sheets(today_date_tz.isoformat())
 
 # SIDEBAR
 st.sidebar.image("saritur1.png")
@@ -109,17 +110,20 @@ st.sidebar.header("📊 Filtro por período")
 start_date = st.sidebar.date_input("Início", date.today() - timedelta(days=30))
 end_date = st.sidebar.date_input("Fim", date.today())
 
-total_alta = df_alta[(df_alta[COL_DATA] >= pd.to_datetime(start_date)) & (df_alta[COL_DATA] <= pd.to_datetime(end_date))][COL_VALOR].sum()
+# Cálculos de totais filtrados para a Sidebar
+df_alta_total = pd.concat([df_2026, df_2025], ignore_index=True)
+total_alta = df_alta_total[(df_alta_total[COL_DATA] >= pd.to_datetime(start_date)) & (df_alta_total[COL_DATA] <= pd.to_datetime(end_date))][COL_VALOR].sum()
+
 total_emerg_combinado = pd.concat([df_emerg, df_geral_emerg], ignore_index=True)
 total_emerg = total_emerg_combinado[(total_emerg_combinado[COL_DATA] >= pd.to_datetime(start_date)) & (total_emerg_combinado[COL_DATA] <= pd.to_datetime(end_date))][COL_VALOR].sum()
 
-st.sidebar.success(f"2026: {br_money(total_alta)}")
+st.sidebar.success(f"TOTAL ALTA (2025/26): {br_money(total_alta)}")
 st.sidebar.success(f"EMERGENCIAL TOTAL: {br_money(total_emerg)}")
 
 # CORPO PRINCIPAL
 st.title("Sistema de Consulta de Pedidos – Saritur")
 BACKUP_NAME = calculate_backup_sheet_name()
-st.info(f"Bases: 2026, EMERGENCIAL, GERAL_EMERGENCIAL e BACKUP ({BACKUP_NAME})")
+st.info(f"Bases: 2026, 2025, EMERGENCIAL, GERAL_EMERGENCIAL e BACKUP ({BACKUP_NAME})")
 
 st.subheader("🔍 Situação da Solicitação/Pedido")
 current_key = f"input_{st.session_state.input_reset_counter}"
@@ -129,9 +133,10 @@ if pedido_input:
     pid = pedido_input.strip().upper()
     found = False
     
-    # Lista de bases para iteração de busca
+    # Lista de bases atualizada com 2025
     bases_busca = [
-        (df_alta, "2026"), 
+        (df_2026, "2026"), 
+        (df_2025, "2025"), 
         (df_emerg, "EMERGENCIAL"), 
         (df_geral_emerg, "GERAL_EMERGENCIAL"), 
         (df_backup, f"BACKUP {BACKUP_NAME}")
@@ -159,15 +164,21 @@ data_busca = st.date_input("Selecione a data:", value=today_date_tz)
 
 if data_busca:
     dt = pd.to_datetime(data_busca).normalize()
-    alta_f = df_alta[df_alta[COL_DATA] == dt] if not df_alta.empty else pd.DataFrame()
+    
+    # Filtra 2025 e 2026 para a data selecionada
+    alta_26_f = df_2026[df_2026[COL_DATA] == dt] if not df_2026.empty else pd.DataFrame()
+    alta_25_f = df_2025[df_2025[COL_DATA] == dt] if not df_2025.empty else pd.DataFrame()
+    alta_total_f = pd.concat([alta_26_f, alta_25_f], ignore_index=True)
+    
     emerg_f = pd.concat([df_emerg, df_geral_emerg], ignore_index=True)
     emerg_f = emerg_f[emerg_f[COL_DATA] == dt] if not emerg_f.empty else pd.DataFrame()
     
     c1, c2 = st.columns(2)
-    c1.metric("2026", br_money(alta_f[COL_VALOR].sum()), delta="Limite 180k" if alta_f[COL_VALOR].sum() > 180000 else None)
+    c1.metric("ALTA (2025/26)", br_money(alta_total_f[COL_VALOR].sum()), delta="Limite 180k" if alta_total_f[COL_VALOR].sum() > 180000 else None)
     c2.metric("EMERGENCIAL", br_money(emerg_f[COL_VALOR].sum()), delta="Limite 15k" if emerg_f[COL_VALOR].sum() > 15000 else None)
 
-    for df_graf, titulo, cor in [(alta_f, "🟦 Top 10 2026", "blue"), (emerg_f, "🟥 Top 10 EMERGENCIAL", "red")]:
+    # Gráficos ajustados para mostrar o consolidado da Alta
+    for df_graf, titulo, cor in [(alta_total_f, "🟦 Top 10 ALTA (Consolidado)", "blue"), (emerg_f, "🟥 Top 10 EMERGENCIAL", "red")]:
         if not df_graf.empty:
             st.write(f"### {titulo}")
             top = df_graf.sort_values(by=COL_VALOR, ascending=False).head(10).copy()
@@ -181,34 +192,23 @@ if data_busca:
             text = chart.mark_text(align='left', dx=5).encode(text='VALOR_TEXTO')
             st.altair_chart((chart + text).properties(height=300), use_container_width=True)
             st.dataframe(df_graf[[COL_PEDIDO, COL_VALOR, COL_STATUS, COL_UNIDADE, COL_CARRO]], hide_index=True)
-# --- BLOCO DE GASTO POR UNIDADE (FORMATO TABELA ESTRUTURADA) ---
-    df_comb = pd.concat([alta_f, emerg_f], ignore_index=True)
+
+    # Gasto por Unidade (Tabela Estruturada)
+    df_comb = pd.concat([alta_total_f, emerg_f], ignore_index=True)
     if not df_comb.empty:
         st.write("---")
         st.subheader(f"🏢 Gasto por Unidade (Status: PEDIDO)")
         
-        # 1. Filtra apenas status PEDIDO
         df_p = df_comb[df_comb[COL_STATUS].astype(str).str.strip().str.upper() == "PEDIDO"].copy()
         
         if not df_p.empty:
-            # 2. PADRONIZAÇÃO: Remove acentos e espaços para agrupar corretamente
-            # Isso evita que "INDÚSTRIA" e "INDUSTRIA" apareçam separados
             df_p[COL_UNIDADE] = df_p[COL_UNIDADE].astype(str).str.strip().str.upper()
             df_p[COL_UNIDADE] = df_p[COL_UNIDADE].str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8')
-            
-            # 3. Agrupa e soma os valores
             gastos = df_p.groupby(COL_UNIDADE)[COL_VALOR].sum().sort_values(ascending=False).reset_index()
-            
-            # 4. Formata os números para o padrão brasileiro de moeda
             gastos_tabela = gastos.copy()
             gastos_tabela.columns = ["UNIDADE", "TOTAL (R$)"]
             gastos_tabela["TOTAL (R$)"] = gastos_tabela["TOTAL (R$)"].apply(br_money)
             
-            # 5. EXIBIÇÃO: st.dataframe com use_container_width cria o visual de tabela do sistema
-            st.dataframe(
-                gastos_tabela, 
-                hide_index=True, 
-                use_container_width=True
-            )
+            st.dataframe(gastos_tabela, hide_index=True, use_container_width=True)
         else:
             st.info("Nenhum gasto com status 'PEDIDO' encontrado para esta data.")
