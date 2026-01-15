@@ -68,7 +68,7 @@ def preparar_dados_consolidados(data_dict, d_inicio, d_fim):
     lista_final = []
     
     # ALTA
-    df_a = data_dict.get('ALTA', pd.DataFrame()).copy()
+    df_a = data_dict.get('2026', pd.DataFrame()).copy()
     if not df_a.empty:
         df_a.columns = [str(c).strip().upper() for c in df_a.columns]
         df_a['DATA_DT'] = pd.to_datetime(df_a['DATA'], dayfirst=True, errors='coerce').dt.date
@@ -85,7 +85,7 @@ def preparar_dados_consolidados(data_dict, d_inicio, d_fim):
             
             if not df_filt.empty:
                 df_filt['VALOR_NUM'] = df_filt['VALOR'].apply(limpar_moeda)
-                lista_final.append(df_filt[['UNIDADE', 'VALOR_NUM']].assign(ORIGEM='ALTA'))
+                lista_final.append(df_filt[['UNIDADE', 'VALOR_NUM']].assign(ORIGEM='2026'))
 
     # EMERGENCIAL
     df_e = data_dict.get('EMERGENCIAL', pd.DataFrame()).copy()
@@ -110,21 +110,21 @@ def gerar_grafico_ranking(df, d_ini, d_fim):
     df_pivot = df.groupby(['UNIDADE', 'ORIGEM'])['VALOR_NUM'].sum().unstack(fill_value=0).reset_index()
     
     # Garante que as colunas existam para evitar o erro do "get"
-    if 'ALTA' not in df_pivot.columns: df_pivot['ALTA'] = 0.0
+    if '2026' not in df_pivot.columns: df_pivot['2026'] = 0.0
     if 'EMERGENCIAL' not in df_pivot.columns: df_pivot['EMERGENCIAL'] = 0.0
     
     # Ranqueamento pelo Total (Crescente para que a maior unidade fique no topo do gráfico horizontal)
-    df_pivot['TOTAL'] = df_pivot['ALTA'] + df_pivot['EMERGENCIAL']
+    df_pivot['TOTAL'] = df_pivot['2026'] + df_pivot['EMERGENCIAL']
     df_pivot = df_pivot.sort_values(by='TOTAL', ascending=False)
     
     fig = go.Figure()
 
     # Barra de ALTA - Adicionada PRIMEIRO para ficar na parte superior do grupo
     fig.add_trace(go.Bar(
-        y=df_pivot['UNIDADE'], x=df_pivot['ALTA'],
-        name='ALTA', orientation='h',
+        y=df_pivot['UNIDADE'], x=df_pivot['2026'],
+        name='2026', orientation='h',
         marker=dict(color='#1F4E79'),
-        text=[br_money(v) if v > 0 else "" for v in df_pivot['ALTA']],
+        text=[br_money(v) if v > 0 else "" for v in df_pivot['2026']],
         textposition='outside', # Valor para fora da barra
         cliponaxis=False # Impede que o texto seja cortado
     ))
@@ -202,7 +202,7 @@ def app():
     data_dict = load_data(PLANILHA_NOME)
     
     # 1. Tabela de Amanhã
-    df_amanha = preparar_tabela_amanha(data_dict.get('ALTA', pd.DataFrame()))
+    df_amanha = preparar_tabela_amanha(data_dict.get('2026', pd.DataFrame()))
     st.subheader(f"📅 Programação para Amanhã ({(hoje + timedelta(days=1)).strftime('%d/%m/%Y')})")
     if not df_amanha.empty:
         st.dataframe(df_amanha, use_container_width=True, hide_index=True)
