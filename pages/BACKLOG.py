@@ -11,7 +11,8 @@ PLANILHA_NOME = "Controle Orçamentário Diário V2"
 COLUNAS_DADOS = ['PEDIDO', 'DATA', 'CARRO | UTILIZAÇÃO', 'STATUS']
 COLUNA_CARRO = 'CARRO | UTILIZAÇÃO' 
 
-ABAS_A_BUSCAR = ['2026', 'EMERGENCIAL', 'GERAL_EMERGENCIAL']
+# Atualizado para incluir a aba 2025
+ABAS_A_BUSCAR = ['2026', '2025', 'EMERGENCIAL', 'GERAL_EMERGENCIAL']
 
 GOOGLE_SHEET_SCOPES = [
     "https://spreadsheets.google.com/feeds",
@@ -58,19 +59,22 @@ def load_data(sheet_name: str) -> Dict[str, pd.DataFrame]:
                 worksheet = sh.worksheet(tab)
                 list_of_lists = worksheet.get_all_values()
                 if len(list_of_lists) < 2: continue
+                
+                # O cabeçalho está na linha 2 (índice 1)
                 header = [h.strip().upper() for h in list_of_lists[1]]
                 data_rows = list_of_lists[2:] 
                 df = pd.DataFrame(data_rows, columns=header)
                 df.columns = [c.strip().upper() for c in df.columns]
+                
                 if 'PEDIDO' in df.columns:
                     df['PEDIDO'] = df['PEDIDO'].astype(str).str.strip()
                 data[tab] = df
             except gspread.WorksheetNotFound: 
-                st.error(f"Erro: Aba '{tab}' não encontrada.")
+                # Apenas ignora se a aba não existir, sem travar o app
                 continue
         return data
     except Exception as e:
-        st.error(f"Erro inesperado: {e}")
+        st.error(f"Erro inesperado ao abrir planilha: {e}")
         return None
 
 # ----------------------------------------------------
@@ -90,6 +94,7 @@ def search_pedido(pedido: str, data: Dict[str, pd.DataFrame], carro_selecionado:
         "Pedido": pedido, "Origem": "", "Data": "", COLUNA_CARRO: "", 
         "Status": "Pedido Não Encontrado", "Carro Foco": carro_selecionado
     }
+    # Percorre as abas na ordem definida em ABAS_A_BUSCAR
     for sheet_name, df in data.items():
         if 'PEDIDO' not in df.columns: continue
         match = df[df['PEDIDO'] == pedido]
@@ -107,7 +112,6 @@ def perform_search(pedidos: List[str], data: Dict[str, pd.DataFrame], carro_sele
     return [search_pedido(p, data, carro_selecionado) for p in pedidos]
 
 def handle_search_logic(input_text, carro_selecionado, data_frames):
-    """Lógica centralizada de busca para evitar conflitos de session_state."""
     parsed_pedidos = parse_pedidos(input_text)
     
     if carro_selecionado == LISTA_CARROS_CADASTRO[0]:
@@ -115,7 +119,7 @@ def handle_search_logic(input_text, carro_selecionado, data_frames):
         return
 
     if not parsed_pedidos:
-        st.session_state['feedback_message'] = "⚠️ ERRO: Nenhum número de pedido válido."
+        st.session_state['feedback_message'] = "⚠️ ERRO: Nenhum número de pedido válido no texto."
         return 
         
     search_results = perform_search(parsed_pedidos, data_frames, carro_selecionado)
@@ -162,13 +166,14 @@ def apply_text_color_by_status(row):
 def display_search_history():
     history = st.session_state.get('search_history', [])
     if not history:
-        st.info("Nenhuma busca realizada no momento.")
+        st.info("Aguardando realização de busca...")
         return
     
     for df in history:
         if df is not None and not df.empty:
             carro_foco = df['Carro Foco'].iloc[0]
             temp_df = df.copy()
+            # Ordenação: Pedidos encontrados primeiro, erros por último
             temp_df['Sort_Key'] = temp_df['Status'].apply(lambda x: 1 if x == "Pedido Não Encontrado" else 0)
             df_sorted = temp_df.sort_values(by='Sort_Key').drop(columns=['Sort_Key'])
             
@@ -187,6 +192,7 @@ def display_search_history():
 def app():
     initialize_state()
     st.title("🔍 Pesquisa em Backlog e Geral")
+    st.info(f"Bases monitoradas: {', '.join(ABAS_A_BUSCAR)}")
 
     if st.session_state.get('feedback_message'):
         if "✅" in st.session_state['feedback_message']:
@@ -195,30 +201,28 @@ def app():
             st.error(st.session_state['feedback_message'])
         st.session_state['feedback_message'] = None 
 
-    with st.spinner("Conectando ao banco de dados..."):
+    with st.spinner("Carregando bases de dados..."):
         data_frames = load_data(PLANILHA_NOME)
     
-    if data_frames is None: st.stop()
+    if data_frames is None: 
+        st.warning("Não foi possível carregar os dados. Verifique a conexão com o Google Sheets.")
+        st.stop()
     
-    # Geramos uma key única para o campo de texto baseada no contador de reset
     current_key = f"input_text_{st.session_state.input_reset_counter}"
     
     col1, col2 = st.columns([0.6, 0.4])
     with col1:
-        st.text_area("Cole o bloco de texto contendo os pedidos:", height=120, key=current_key)
+        st.text_area("Cole aqui os pedidos (aceita texto sujo):", height=120, key=current_key)
     
     with col2:
-        st.selectbox("Critério de Carro:", options=LISTA_CARROS_CADASTRO, key='carro_select')
+        st.selectbox("Vincular ao Carro:", options=LISTA_CARROS_CADASTRO, key='carro_select')
         
         if st.button("BUSCAR DADOS", type="primary", use_container_width=True):
-            # 1. Capturamos o texto do widget usando a key dinâmica
             texto_inserido = st.session_state[current_key]
             carro_selecionado = st.session_state.carro_select
             
-            # 2. Processamos a busca
             handle_search_logic(texto_inserido, carro_selecionado, data_frames)
             
-            # 3. Incrementamos o contador para mudar a key do widget (isso limpa o campo)
             st.session_state.input_reset_counter += 1
             st.rerun()
 
@@ -237,5 +241,3 @@ def app():
 
 if __name__ == '__main__':
     app()
-
-#fim
