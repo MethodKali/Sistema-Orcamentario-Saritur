@@ -10,10 +10,10 @@ st.write(f"Tentando conectar ao servidor: `{db_config['server']}`")
 try:
     # Tentativa de conexão com timeout curto para não travar o app
     conn = pymssql.connect(
-        server=db_config["server"],
-        user=db_config["username"],
-        password=db_config["password"],
-        database=db_config["database"],
+        server=db_config["192.168.0.11"],
+        user=db_config["BASE_STAGE_OFICINASMATERIAIS"],
+        password=db_config["MATEUS.PEREIRA"],
+        database=db_config["qKcE1BP3mm82"],
         login_timeout=10  # Espera apenas 10 segundos
     )
     st.success("✅ Conexão estabelecida com sucesso!")
