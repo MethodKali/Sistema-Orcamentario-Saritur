@@ -35,15 +35,22 @@ def br_money(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def safe_load(df):
-    df = df.copy()
-    # Limpeza de nomes de colunas para garantir compatibilidade
-    df.columns = [c.strip().upper() for c in df.columns]
+    if df.empty:
+        return df
     
+    # Limpeza profunda dos nomes das colunas
+    df.columns = [str(c).strip().upper() for c in df.columns]
+    
+    # Verifica se as colunas essenciais existem antes de processar
     if COL_DATA in df.columns:
         df[COL_DATA] = pd.to_datetime(df[COL_DATA], dayfirst=True, errors="coerce").dt.normalize()
-        df = df[pd.notna(df[COL_DATA])].copy()
+    
     if COL_VALOR in df.columns:
         df[COL_VALOR] = df[COL_VALOR].apply(valor_brasileiro)
+    else:
+        # Se a coluna VALOR não for encontrada, cria uma zerada para não dar erro no sum()
+        df[COL_VALOR] = 0.0
+        
     return df
 
 def calculate_backup_sheet_name():
@@ -59,18 +66,30 @@ def load_sheets(today_str):
         creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(creds_json), SCOPE) if creds_json else ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, SCOPE)
         gc = gspread.authorize(creds)
         sh = gc.open_by_key(SPREADSHEET_ID)
-    except: return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    except Exception as e: 
+        st.error(f"Erro de conexão: {e}")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     def load_sheet_as_df(sheet_name):
         try:
-            data = sh.worksheet(sheet_name).get_all_values()
+            worksheet = sh.worksheet(sheet_name)
+            data = worksheet.get_all_values()
             if len(data) < 2: return pd.DataFrame()
             
-            # Pega o cabeçalho da SEGUNDA linha (índice 1) conforme sua nova estrutura
-            raw_headers = [h.strip().upper() for h in data[1]]
-            df = pd.DataFrame(data[2:], columns=raw_headers)
+            # Pega os cabeçalhos da linha 2 (índice 1)
+            headers = [h.strip().upper() for h in data[1]]
+            
+            # Se a linha 2 estiver vazia, tenta a linha 1 por segurança
+            if all(h == "" for h in headers):
+                headers = [h.strip().upper() for h in data[0]]
+                df = pd.DataFrame(data[1:], columns=headers)
+            else:
+                df = pd.DataFrame(data[2:], columns=headers)
+            
             return safe_load(df)
-        except: return pd.DataFrame()
+        except Exception as e:
+            st.warning(f"Aba {sheet_name} não encontrada ou erro na leitura.")
+            return pd.DataFrame()
 
     return load_sheet_as_df("PROGRAMAÇÃO DIÁRIA"), load_sheet_as_df("EMERGENCIAL"), load_sheet_as_df(calculate_backup_sheet_name())
 
