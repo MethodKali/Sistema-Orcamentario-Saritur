@@ -25,7 +25,6 @@ COL_AVALIACAO = "AVALIAÇÃO"
 def valor_brasileiro(valor):
     if pd.isna(valor) or valor is None: return 0.0
     s = str(valor).strip()
-    # Remove R$, espaços e pontos de milhar, troca vírgula por ponto
     s = re.sub(r"[R$\s\.]", "", s).replace(",", ".")
     try: return float(s)
     except: return 0.0
@@ -35,29 +34,34 @@ def br_money(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def safe_load(df, sheet_name):
+    # Se o DF vier vazio, cria estrutura mínima para não quebrar filtros
     if df.empty:
-        return pd.DataFrame(columns=[COL_DATA, COL_VALOR, COL_PEDIDO, COL_STATUS, COL_UNIDADE])
+        return pd.DataFrame(columns=[COL_DATA, COL_VALOR, COL_PEDIDO, COL_STATUS, COL_UNIDADE, COL_AVALIACAO])
     
-    # Padronização agressiva de colunas
+    # Padronização de colunas
     df.columns = [str(c).strip().upper() for c in df.columns]
     
-    # Se a coluna VALOR não existir, tentamos encontrar algo parecido ou criamos
+    # Garante que a coluna VALOR exista
     if COL_VALOR not in df.columns:
         cols_com_valor = [c for c in df.columns if "VALOR" in c]
         if cols_com_valor:
             df = df.rename(columns={cols_com_valor[0]: COL_VALOR})
         else:
-            df[COL_VALOR] = "0"
+            df[COL_VALOR] = 0.0
+    
+    # Garante que a coluna AVALIACAO exista (mesmo que vazia)
+    if COL_AVALIACAO not in df.columns:
+        df[COL_AVALIACAO] = ""
 
-    # Se a coluna DATA não existir
-    if COL_DATA not in df.columns:
-        df[COL_DATA] = None
-
-    # Conversão de tipos com tratamento de erro
+    # Conversão de tipos
     df[COL_VALOR] = df[COL_VALOR].apply(valor_brasileiro)
-    df[COL_DATA] = pd.to_datetime(df[COL_DATA], dayfirst=True, errors="coerce").dt.normalize()
+    if COL_DATA in df.columns:
+        df[COL_DATA] = pd.to_datetime(df[COL_DATA], dayfirst=True, errors="coerce").dt.normalize()
+    else:
+        df[COL_DATA] = pd.NaT
     
     return df
+
 def calculate_backup_sheet_name():
     today = date.today()
     monday_last_week = today - timedelta(days=today.weekday() + 7)
@@ -80,10 +84,10 @@ def load_sheets(today_str):
             data = ws.get_all_values()
             if len(data) < 2: return pd.DataFrame()
             
-            # Tenta ler o cabeçalho da linha 2
+            # Tenta ler o cabeçalho da linha 2 (índice 1)
             headers = [h.strip().upper() for h in data[1]]
             
-            # Se a linha 2 for inútil (vazia), tenta a linha 1
+            # Se não achar as colunas básicas na linha 2, tenta a linha 1
             if not any(h in headers for h in ["VALOR", "DATA", "PEDIDO"]):
                 headers = [h.strip().upper() for h in data[0]]
                 df = pd.DataFrame(data[1:], columns=headers)
@@ -99,12 +103,12 @@ def load_sheets(today_str):
 def show_result(row, sheet_name):
     st.write(f"📁 **Origem:** {sheet_name}") 
     
-    # Lógica de Alerta Vermelho para EMERGENCIAL
-    avaliacao = str(row.get(COL_AVALIACAO, "")).strip().upper()
-    if avaliacao == "EMERGENCIAL":
+    # Alerta Vermelho para AVALIAÇÃO EMERGENCIAL
+    aval = str(row.get(COL_AVALIACAO, "")).strip().upper()
+    if aval == "EMERGENCIAL":
         st.error(f"🚨 **AVALIAÇÃO: EMERGENCIAL**")
-    elif avaliacao != "" and avaliacao != "NAN":
-        st.info(f"⚖️ **Avaliação:** {avaliacao}")
+    elif aval not in ["", "NAN", "NONE"]:
+        st.info(f"⚖️ **Avaliação:** {aval}")
         
     st.write(f"📅 **Previsão de pagamento:** {row.get(COL_DATA).strftime('%d/%m/%Y') if pd.notna(row.get(COL_DATA)) else 'N/A'}") 
     st.write(f"📌 **Status:** {row.get(COL_STATUS)}")
@@ -133,12 +137,18 @@ st.sidebar.header("📊 Filtro por período")
 start_date = st.sidebar.date_input("Início", date.today() - timedelta(days=30))
 end_date = st.sidebar.date_input("Fim", date.today())
 
-# Cálculos Totais
-total_prog = df_programacao[(df_programacao[COL_DATA] >= pd.to_datetime(start_date)) & (df_programacao[COL_DATA] <= pd.to_datetime(end_date))][COL_VALOR].sum()
-total_emerg = df_emerg[(df_emerg[COL_DATA] >= pd.to_datetime(start_date)) & (df_emerg[COL_DATA] <= pd.to_datetime(end_date))][COL_VALOR].sum()
+# Cálculos Totais da Sidebar com Verificação de Coluna
+def get_sum(df, s_date, e_date):
+    if df.empty or COL_DATA not in df.columns or COL_VALOR not in df.columns:
+        return 0.0
+    mask = (df[COL_DATA] >= pd.to_datetime(s_date)) & (df[COL_DATA] <= pd.to_datetime(e_date))
+    return df.loc[mask, COL_VALOR].sum()
 
-st.sidebar.success(f"TOTAL PROGRAMAÇÃO: {br_money(total_prog)}")
-st.sidebar.success(f"TOTAL EMERGENCIAL: {br_money(total_emerg)}")
+t_prog = get_sum(df_programacao, start_date, end_date)
+t_emerg = get_sum(df_emerg, start_date, end_date)
+
+st.sidebar.success(f"TOTAL PROGRAMAÇÃO: {br_money(t_prog)}")
+st.sidebar.success(f"TOTAL EMERGENCIAL: {br_money(t_emerg)}")
 
 st.title("Sistema de Consulta de Pedidos – Saritur")
 BACKUP_NAME = calculate_backup_sheet_name()
@@ -150,12 +160,7 @@ pedido_input = st.text_input("Digite o número do pedido:", key=current_key)
 if pedido_input:
     pid = pedido_input.strip().upper()
     found = False
-    
-    bases_busca = [
-        (df_programacao, "PROGRAMAÇÃO DIÁRIA"), 
-        (df_emerg, "EMERGENCIAL"), 
-        (df_backup, f"BACKUP {BACKUP_NAME}")
-    ]
+    bases_busca = [(df_programacao, "PROGRAMAÇÃO DIÁRIA"), (df_emerg, "EMERGENCIAL"), (df_backup, f"BACKUP {BACKUP_NAME}")]
     
     for df, label in bases_busca:
         if not df.empty and COL_PEDIDO in df.columns:
@@ -167,7 +172,6 @@ if pedido_input:
     
     if not found:
         st.warning(f"❌ Pedido '{pedido_input}' não encontrado.")
-        
     if st.button("Limpar Busca"):
         st.session_state.input_reset_counter += 1
         st.rerun()
@@ -180,18 +184,22 @@ data_busca = st.date_input("Selecione a data:", value=today_date_tz)
 if data_busca:
     dt = pd.to_datetime(data_busca).normalize()
     
-    prog_f = df_programacao[df_programacao[COL_DATA] == dt] if not df_programacao.empty else pd.DataFrame()
-    emerg_f = df_emerg[df_emerg[COL_DATA] == dt] if not df_emerg.empty else pd.DataFrame()
+    # Filtros Seguros
+    prog_f = df_programacao[df_programacao[COL_DATA] == dt] if not df_programacao.empty and COL_DATA in df_programacao.columns else pd.DataFrame()
+    emerg_f = df_emerg[df_emerg[COL_DATA] == dt] if not df_emerg.empty and COL_DATA in df_emerg.columns else pd.DataFrame()
+    
+    # Soma Segura para as Métricas
+    val_prog_f = prog_f[COL_VALOR].sum() if not prog_f.empty and COL_VALOR in prog_f.columns else 0.0
+    val_emerg_f = emerg_f[COL_VALOR].sum() if not emerg_f.empty and COL_VALOR in emerg_f.columns else 0.0
     
     c1, c2 = st.columns(2)
-    c1.metric("PROGRAMAÇÃO", br_money(prog_f[COL_VALOR].sum()), delta="Limite 180k" if prog_f[COL_VALOR].sum() > 180000 else None, delta_color="inverse")
-    c2.metric("EMERGENCIAL", br_money(emerg_f[COL_VALOR].sum()), delta="Limite 15k" if emerg_f[COL_VALOR].sum() > 15000 else None, delta_color="inverse")
+    c1.metric("PROGRAMAÇÃO", br_money(val_prog_f), delta="Limite 180k" if val_prog_f > 180000 else None, delta_color="inverse")
+    c2.metric("EMERGENCIAL", br_money(val_emerg_f), delta="Limite 15k" if val_emerg_f > 15000 else None, delta_color="inverse")
 
-    # Gráficos e Tabelas
+    # Gráficos
     for df_graf, titulo, cor in [(prog_f, "🟦 Top 10 Programação", "blue"), (emerg_f, "🟥 Top 10 Emergencial", "red")]:
-        if not df_graf.empty:
+        if not df_graf.empty and COL_VALOR in df_graf.columns and COL_PEDIDO in df_graf.columns:
             st.write(f"### {titulo}")
-            # Garante que VALOR é numérico antes de ordenar
             top = df_graf.sort_values(by=COL_VALOR, ascending=False).head(10).copy()
             top['VALOR_TEXTO'] = top[COL_VALOR].apply(br_money)
             
@@ -203,23 +211,20 @@ if data_busca:
             text = chart.mark_text(align='left', dx=5).encode(text='VALOR_TEXTO')
             st.altair_chart((chart + text).properties(height=300), use_container_width=True)
             
-            # Tabela detalhada
-            cols_disponiveis = [c for c in [COL_PEDIDO, COL_VALOR, COL_AVALIACAO, COL_STATUS, COL_UNIDADE, COL_CARRO] if c in df_graf.columns]
-            st.dataframe(df_graf[cols_disponiveis], hide_index=True)
+            cols_show = [c for c in [COL_PEDIDO, COL_VALOR, COL_AVALIACAO, COL_STATUS, COL_UNIDADE, COL_CARRO] if c in df_graf.columns]
+            st.dataframe(df_graf[cols_show], hide_index=True)
 
     # Gasto por Unidade
     df_comb = pd.concat([prog_f, emerg_f], ignore_index=True)
-    if not df_comb.empty:
+    if not df_comb.empty and COL_STATUS in df_comb.columns:
         st.write("---")
         st.subheader(f"🏢 Gasto por Unidade (Status: PEDIDO)")
-        
         df_p = df_comb[df_comb[COL_STATUS].astype(str).str.strip().str.upper() == "PEDIDO"].copy()
         
-        if not df_p.empty:
-            df_p[COL_UNIDADE] = df_p[COL_UNIDADE].astype(str).str.strip().str.upper()
+        if not df_p.empty and COL_UNIDADE in df_p.columns:
+            df_p[COL_UNIDADE] = df_p[COL_UNIDADE].astype(str).str.strip().upper()
             gastos = df_p.groupby(COL_UNIDADE)[COL_VALOR].sum().sort_values(ascending=False).reset_index()
             gastos.columns = ["UNIDADE", "TOTAL (R$)"]
-            # Formatação para exibição
             gastos_view = gastos.copy()
             gastos_view["TOTAL (R$)"] = gastos_view["TOTAL (R$)"].apply(br_money)
             st.dataframe(gastos_view, hide_index=True, use_container_width=True)
