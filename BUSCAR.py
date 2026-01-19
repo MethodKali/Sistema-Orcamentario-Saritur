@@ -218,17 +218,38 @@ if data_busca:
             cols_show = [c for c in [COL_PEDIDO, COL_VALOR, COL_AVALIACAO, COL_STATUS, COL_UNIDADE, COL_CARRO] if c in df_graf.columns]
             st.dataframe(df_graf[cols_show], hide_index=True)
 
-    # Gasto por Unidade
+    # Gasto por Unidade (Protegido contra AttributeError e colunas ausentes)
     df_comb = pd.concat([prog_f, emerg_f], ignore_index=True)
+    
     if not df_comb.empty and COL_STATUS in df_comb.columns:
         st.write("---")
         st.subheader(f"🏢 Gasto por Unidade (Status: PEDIDO)")
+        
+        # Filtra apenas linhas com status PEDIDO
         df_p = df_comb[df_comb[COL_STATUS].astype(str).str.strip().str.upper() == "PEDIDO"].copy()
         
-        if not df_p.empty and COL_UNIDADE in df_p.columns:
-            df_p[COL_UNIDADE] = df_p[COL_UNIDADE].astype(str).str.strip().upper()
-            gastos = df_p.groupby(COL_UNIDADE)[COL_VALOR].sum().sort_values(ascending=False).reset_index()
-            gastos.columns = ["UNIDADE", "TOTAL (R$)"]
-            gastos_view = gastos.copy()
-            gastos_view["TOTAL (R$)"] = gastos_view["TOTAL (R$)"].apply(br_money)
-            st.dataframe(gastos_view, hide_index=True, use_container_width=True)
+        if not df_p.empty:
+            # Verifica se a coluna UNIDADE existe (ou uma versão desduplicada dela)
+            col_unidade_atual = None
+            for c in df_p.columns:
+                if c.startswith(COL_UNIDADE):
+                    col_unidade_atual = c
+                    break
+            
+            if col_unidade_atual:
+                # CORREÇÃO DO ERRO: Adicionado .str. antes do upper()
+                df_p[col_unidade_atual] = df_p[col_unidade_atual].astype(str).str.strip().str.upper()
+                
+                # Agrupamento e soma
+                gastos = df_p.groupby(col_unidade_atual)[COL_VALOR].sum().sort_values(ascending=False).reset_index()
+                gastos.columns = ["UNIDADE", "TOTAL (R$)"]
+                
+                # Formatação para exibição
+                gastos_view = gastos.copy()
+                gastos_view["TOTAL (R$)"] = gastos_view["TOTAL (R$)"].apply(br_money)
+                
+                st.dataframe(gastos_view, hide_index=True, use_container_width=True)
+            else:
+                st.warning("Coluna 'UNIDADE' não encontrada para gerar o resumo por empresa.")
+        else:
+            st.info("Nenhum gasto com status 'PEDIDO' encontrado para esta data.")
