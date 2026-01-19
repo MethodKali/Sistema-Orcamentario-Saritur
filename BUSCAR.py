@@ -34,14 +34,19 @@ def br_money(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def safe_load(df, sheet_name):
-    # Se o DF vier vazio, cria estrutura mínima para não quebrar filtros
     if df.empty:
         return pd.DataFrame(columns=[COL_DATA, COL_VALOR, COL_PEDIDO, COL_STATUS, COL_UNIDADE, COL_AVALIACAO])
     
-    # Padronização de colunas
+    # 1. Padronização inicial
     df.columns = [str(c).strip().upper() for c in df.columns]
     
-    # Garante que a coluna VALOR exista
+    # 2. RESOLUÇÃO DE DUPLICADOS (Evita o DuplicateError do Altair)
+    cols = pd.Series(df.columns)
+    for dup in cols[cols.duplicated()].unique():
+        cols[cols == dup] = [f"{dup}_{i}" if i != 0 else dup for i in range(sum(cols == dup))]
+    df.columns = cols
+
+    # 3. Garante que a coluna VALOR exista
     if COL_VALOR not in df.columns:
         cols_com_valor = [c for c in df.columns if "VALOR" in c]
         if cols_com_valor:
@@ -49,11 +54,11 @@ def safe_load(df, sheet_name):
         else:
             df[COL_VALOR] = 0.0
     
-    # Garante que a coluna AVALIACAO exista (mesmo que vazia)
+    # 4. Garante que a coluna AVALIACAO exista
     if COL_AVALIACAO not in df.columns:
         df[COL_AVALIACAO] = ""
 
-    # Conversão de tipos
+    # 5. Conversão de tipos
     df[COL_VALOR] = df[COL_VALOR].apply(valor_brasileiro)
     if COL_DATA in df.columns:
         df[COL_DATA] = pd.to_datetime(df[COL_DATA], dayfirst=True, errors="coerce").dt.normalize()
@@ -61,7 +66,6 @@ def safe_load(df, sheet_name):
         df[COL_DATA] = pd.NaT
     
     return df
-
 def calculate_backup_sheet_name():
     today = date.today()
     monday_last_week = today - timedelta(days=today.weekday() + 7)
