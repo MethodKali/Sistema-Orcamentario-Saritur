@@ -19,12 +19,13 @@ LIMITE_EMERG_DIARIO = 15000.00
 COL_PEDIDO, COL_STATUS, COL_DATA = "PEDIDO", "STATUS", "DATA"
 COL_VALOR, COL_UNIDADE, COL_CARRO = "VALOR", "UNIDADE", "CARRO | UTILIZAÇÃO"
 COL_FORNECEDOR = "FORNECEDOR"
-COL_AVALIACAO = "AVALIAÇÃO" # Nova coluna importante
+COL_AVALIACAO = "AVALIAÇÃO" 
 
 # --- FUNÇÕES DE UTILIDADE ---
 def valor_brasileiro(valor):
     if pd.isna(valor) or valor is None: return 0.0
     s = str(valor).strip()
+    # Remove R$, espaços e pontos de milhar, troca vírgula por ponto
     s = re.sub(r"[R$\s\.]", "", s).replace(",", ".")
     try: return float(s)
     except: return 0.0
@@ -35,6 +36,9 @@ def br_money(valor):
 
 def safe_load(df):
     df = df.copy()
+    # Limpeza de nomes de colunas para garantir compatibilidade
+    df.columns = [c.strip().upper() for c in df.columns]
+    
     if COL_DATA in df.columns:
         df[COL_DATA] = pd.to_datetime(df[COL_DATA], dayfirst=True, errors="coerce").dt.normalize()
         df = df[pd.notna(df[COL_DATA])].copy()
@@ -62,30 +66,23 @@ def load_sheets(today_str):
             data = sh.worksheet(sheet_name).get_all_values()
             if len(data) < 2: return pd.DataFrame()
             
+            # Pega o cabeçalho da SEGUNDA linha (índice 1) conforme sua nova estrutura
             raw_headers = [h.strip().upper() for h in data[1]]
-            final_headers = []
-            counts = {}
-            for h in raw_headers:
-                name = h if h else "VAZIO"
-                if name in counts:
-                    counts[name] += 1
-                    final_headers.append(f"{name}_{counts[name]}")
-                else:
-                    counts[name] = 0
-                    final_headers.append(name)
-            
-            df = pd.DataFrame(data[2:], columns=final_headers)
+            df = pd.DataFrame(data[2:], columns=raw_headers)
             return safe_load(df)
         except: return pd.DataFrame()
 
-    # Retorna agora apenas 3 DataFrames (PROGRAMAÇÃO DIÁRIA, EMERGENCIAL, BACKUP SEMANA)
     return load_sheet_as_df("PROGRAMAÇÃO DIÁRIA"), load_sheet_as_df("EMERGENCIAL"), load_sheet_as_df(calculate_backup_sheet_name())
 
 def show_result(row, sheet_name):
     st.write(f"📁 **Origem:** {sheet_name}") 
-    # Exibe avaliação apenas se existir na linha (Geralmente na Programação Diária)
-    if COL_AVALIACAO in row and row[COL_AVALIACAO]:
-        st.info(f"⚖️ **Avaliação:** {row.get(COL_AVALIACAO)}")
+    
+    # Lógica de Alerta Vermelho para EMERGENCIAL
+    avaliacao = str(row.get(COL_AVALIACAO, "")).strip().upper()
+    if avaliacao == "EMERGENCIAL":
+        st.error(f"🚨 **AVALIAÇÃO: EMERGENCIAL**")
+    elif avaliacao != "" and avaliacao != "NAN":
+        st.info(f"⚖️ **Avaliação:** {avaliacao}")
         
     st.write(f"📅 **Previsão de pagamento:** {row.get(COL_DATA).strftime('%d/%m/%Y') if pd.notna(row.get(COL_DATA)) else 'N/A'}") 
     st.write(f"📌 **Status:** {row.get(COL_STATUS)}")
@@ -102,7 +99,6 @@ today_date_tz = datetime.datetime.now(SAO_PAULO_TZ).date()
 if 'input_reset_counter' not in st.session_state:
     st.session_state.input_reset_counter = 0
 
-# Recebendo as abas simplificadas
 df_programacao, df_emerg, df_backup = load_sheets(today_date_tz.isoformat())
 
 # SIDEBAR
@@ -115,18 +111,15 @@ st.sidebar.header("📊 Filtro por período")
 start_date = st.sidebar.date_input("Início", date.today() - timedelta(days=30))
 end_date = st.sidebar.date_input("Fim", date.today())
 
-# Cálculos de totais filtrados para a Sidebar
-# Na nova estrutura, o que era Alta agora está em PROGRAMAÇÃO DIÁRIA
-total_alta = df_programacao[(df_programacao[COL_DATA] >= pd.to_datetime(start_date)) & (df_programacao[COL_DATA] <= pd.to_datetime(end_date))][COL_VALOR].sum()
+# Cálculos Totais
+total_prog = df_programacao[(df_programacao[COL_DATA] >= pd.to_datetime(start_date)) & (df_programacao[COL_DATA] <= pd.to_datetime(end_date))][COL_VALOR].sum()
 total_emerg = df_emerg[(df_emerg[COL_DATA] >= pd.to_datetime(start_date)) & (df_emerg[COL_DATA] <= pd.to_datetime(end_date))][COL_VALOR].sum()
 
-st.sidebar.success(f"TOTAL PROGRAMAÇÃO: {br_money(total_alta)}")
+st.sidebar.success(f"TOTAL PROGRAMAÇÃO: {br_money(total_prog)}")
 st.sidebar.success(f"TOTAL EMERGENCIAL: {br_money(total_emerg)}")
 
-# CORPO PRINCIPAL
 st.title("Sistema de Consulta de Pedidos – Saritur")
 BACKUP_NAME = calculate_backup_sheet_name()
-st.info(f"Bases Ativas: PROGRAMAÇÃO DIÁRIA, EMERGENCIAL e BACKUP ({BACKUP_NAME})")
 
 st.subheader("🔍 Situação da Solicitação/Pedido")
 current_key = f"input_{st.session_state.input_reset_counter}"
@@ -136,7 +129,6 @@ if pedido_input:
     pid = pedido_input.strip().upper()
     found = False
     
-    # Lista de bases atualizada
     bases_busca = [
         (df_programacao, "PROGRAMAÇÃO DIÁRIA"), 
         (df_emerg, "EMERGENCIAL"), 
@@ -152,13 +144,13 @@ if pedido_input:
                 found = True
     
     if not found:
-        st.warning(f"❌ Pedido '{pedido_input}' não encontrado em nenhuma aba.")
+        st.warning(f"❌ Pedido '{pedido_input}' não encontrado.")
         
     if st.button("Limpar Busca"):
         st.session_state.input_reset_counter += 1
         st.rerun()
 
-# PESQUISA POR DATA E GRÁFICOS
+# RELATÓRIO DIÁRIO E GRÁFICOS
 st.divider()
 st.subheader("📅 Relatório Diário")
 data_busca = st.date_input("Selecione a data:", value=today_date_tz)
@@ -166,37 +158,35 @@ data_busca = st.date_input("Selecione a data:", value=today_date_tz)
 if data_busca:
     dt = pd.to_datetime(data_busca).normalize()
     
-    # Filtra as bases para a data selecionada
-    alta_f = df_programacao[df_programacao[COL_DATA] == dt] if not df_programacao.empty else pd.DataFrame()
+    prog_f = df_programacao[df_programacao[COL_DATA] == dt] if not df_programacao.empty else pd.DataFrame()
     emerg_f = df_emerg[df_emerg[COL_DATA] == dt] if not df_emerg.empty else pd.DataFrame()
     
     c1, c2 = st.columns(2)
-    c1.metric("PROGRAMAÇÃO", br_money(alta_f[COL_VALOR].sum()), delta="Limite 180k" if alta_f[COL_VALOR].sum() > 180000 else None)
-    c2.metric("EMERGENCIAL", br_money(emerg_f[COL_VALOR].sum()), delta="Limite 15k" if emerg_f[COL_VALOR].sum() > 15000 else None)
+    c1.metric("PROGRAMAÇÃO", br_money(prog_f[COL_VALOR].sum()), delta="Limite 180k" if prog_f[COL_VALOR].sum() > 180000 else None, delta_color="inverse")
+    c2.metric("EMERGENCIAL", br_money(emerg_f[COL_VALOR].sum()), delta="Limite 15k" if emerg_f[COL_VALOR].sum() > 15000 else None, delta_color="inverse")
 
-    # Gráficos
-    for df_graf, titulo, cor in [(alta_f, "🟦 Top 10 Programação", "blue"), (emerg_f, "🟥 Top 10 Emergencial", "red")]:
+    # Gráficos e Tabelas
+    for df_graf, titulo, cor in [(prog_f, "🟦 Top 10 Programação", "blue"), (emerg_f, "🟥 Top 10 Emergencial", "red")]:
         if not df_graf.empty:
             st.write(f"### {titulo}")
+            # Garante que VALOR é numérico antes de ordenar
             top = df_graf.sort_values(by=COL_VALOR, ascending=False).head(10).copy()
             top['VALOR_TEXTO'] = top[COL_VALOR].apply(br_money)
             
             chart = alt.Chart(top).mark_bar(color=cor).encode(
-                x=alt.X(COL_VALOR, axis=None), 
+                x=alt.X(COL_VALOR, title="Valor Total"), 
                 y=alt.Y(COL_PEDIDO, sort='-x', title="Pedido"),
-                tooltip=[COL_PEDIDO, 'VALOR_TEXTO']
+                tooltip=[COL_PEDIDO, 'VALOR_TEXTO', COL_UNIDADE]
             )
             text = chart.mark_text(align='left', dx=5).encode(text='VALOR_TEXTO')
             st.altair_chart((chart + text).properties(height=300), use_container_width=True)
             
-            # Mostrar colunas relevantes, incluindo AVALIAÇÃO se existir
-            cols_show = [COL_PEDIDO, COL_VALOR, COL_STATUS, COL_UNIDADE]
-            if COL_AVALIACAO in df_graf.columns: cols_show.insert(2, COL_AVALIACAO)
-            
-            st.dataframe(df_graf[cols_show], hide_index=True)
+            # Tabela detalhada
+            cols_disponiveis = [c for c in [COL_PEDIDO, COL_VALOR, COL_AVALIACAO, COL_STATUS, COL_UNIDADE, COL_CARRO] if c in df_graf.columns]
+            st.dataframe(df_graf[cols_disponiveis], hide_index=True)
 
     # Gasto por Unidade
-    df_comb = pd.concat([alta_f, emerg_f], ignore_index=True)
+    df_comb = pd.concat([prog_f, emerg_f], ignore_index=True)
     if not df_comb.empty:
         st.write("---")
         st.subheader(f"🏢 Gasto por Unidade (Status: PEDIDO)")
@@ -205,10 +195,9 @@ if data_busca:
         
         if not df_p.empty:
             df_p[COL_UNIDADE] = df_p[COL_UNIDADE].astype(str).str.strip().str.upper()
-            df_p[COL_UNIDADE] = df_p[COL_UNIDADE].str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8')
             gastos = df_p.groupby(COL_UNIDADE)[COL_VALOR].sum().sort_values(ascending=False).reset_index()
-            gastos_tabela = gastos.copy()
-            gastos_tabela.columns = ["UNIDADE", "TOTAL (R$)"]
-            gastos_tabela["TOTAL (R$)"] = gastos_tabela["TOTAL (R$)"].apply(br_money)
-            
-            st.dataframe(gastos_tabela, hide_index=True, use_container_width=True)
+            gastos.columns = ["UNIDADE", "TOTAL (R$)"]
+            # Formatação para exibição
+            gastos_view = gastos.copy()
+            gastos_view["TOTAL (R$)"] = gastos_view["TOTAL (R$)"].apply(br_money)
+            st.dataframe(gastos_view, hide_index=True, use_container_width=True)
