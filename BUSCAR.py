@@ -34,30 +34,30 @@ def br_money(valor):
     if pd.isna(valor): return "R$ 0,00"
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-def safe_load(df):
+def safe_load(df, sheet_name):
     if df.empty:
-        return df
+        return pd.DataFrame(columns=[COL_DATA, COL_VALOR, COL_PEDIDO, COL_STATUS, COL_UNIDADE])
     
-    # 1. Limpeza rigorosa: remove colunas sem nome e padroniza para maiúsculo
+    # Padronização agressiva de colunas
     df.columns = [str(c).strip().upper() for c in df.columns]
     
-    # 2. Tratamento da DATA
-    if COL_DATA in df.columns:
-        df[COL_DATA] = pd.to_datetime(df[COL_DATA], dayfirst=True, errors="coerce").dt.normalize()
-    
-    # 3. Tratamento do VALOR (Garante que a coluna exista para não dar KeyError)
+    # Se a coluna VALOR não existir, tentamos encontrar algo parecido ou criamos
     if COL_VALOR not in df.columns:
-        # Tenta encontrar colunas similares como "VALOR_1", "TOTAL", etc, se o gspread renomeou
-        alternativas = [c for c in df.columns if "VALOR" in c]
-        if alternativas:
-            df[COL_VALOR] = df[alternativas[0]].apply(valor_brasileiro)
+        cols_com_valor = [c for c in df.columns if "VALOR" in c]
+        if cols_com_valor:
+            df = df.rename(columns={cols_com_valor[0]: COL_VALOR})
         else:
-            df[COL_VALOR] = 0.0 # Cria zerada se não existir nada
-    else:
-        df[COL_VALOR] = df[COL_VALOR].apply(valor_brasileiro)
-        
-    return df
+            df[COL_VALOR] = "0"
 
+    # Se a coluna DATA não existir
+    if COL_DATA not in df.columns:
+        df[COL_DATA] = None
+
+    # Conversão de tipos com tratamento de erro
+    df[COL_VALOR] = df[COL_VALOR].apply(valor_brasileiro)
+    df[COL_DATA] = pd.to_datetime(df[COL_DATA], dayfirst=True, errors="coerce").dt.normalize()
+    
+    return df
 def calculate_backup_sheet_name():
     today = date.today()
     monday_last_week = today - timedelta(days=today.weekday() + 7)
@@ -71,29 +71,27 @@ def load_sheets(today_str):
         creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(creds_json), SCOPE) if creds_json else ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, SCOPE)
         gc = gspread.authorize(creds)
         sh = gc.open_by_key(SPREADSHEET_ID)
-    except Exception as e: 
-        st.error(f"Erro de conexão: {e}")
+    except: 
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     def load_sheet_as_df(sheet_name):
         try:
-            worksheet = sh.worksheet(sheet_name)
-            data = worksheet.get_all_values()
+            ws = sh.worksheet(sheet_name)
+            data = ws.get_all_values()
             if len(data) < 2: return pd.DataFrame()
             
-            # Pega os cabeçalhos da linha 2 (índice 1)
+            # Tenta ler o cabeçalho da linha 2
             headers = [h.strip().upper() for h in data[1]]
             
-            # Se a linha 2 estiver vazia, tenta a linha 1 por segurança
-            if all(h == "" for h in headers):
+            # Se a linha 2 for inútil (vazia), tenta a linha 1
+            if not any(h in headers for h in ["VALOR", "DATA", "PEDIDO"]):
                 headers = [h.strip().upper() for h in data[0]]
                 df = pd.DataFrame(data[1:], columns=headers)
             else:
                 df = pd.DataFrame(data[2:], columns=headers)
             
-            return safe_load(df)
-        except Exception as e:
-            st.warning(f"Aba {sheet_name} não encontrada ou erro na leitura.")
+            return safe_load(df, sheet_name)
+        except:
             return pd.DataFrame()
 
     return load_sheet_as_df("PROGRAMAÇÃO DIÁRIA"), load_sheet_as_df("EMERGENCIAL"), load_sheet_as_df(calculate_backup_sheet_name())
