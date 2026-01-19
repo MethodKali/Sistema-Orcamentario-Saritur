@@ -38,18 +38,23 @@ def safe_load(df):
     if df.empty:
         return df
     
-    # Limpeza profunda dos nomes das colunas
+    # 1. Limpeza rigorosa: remove colunas sem nome e padroniza para maiúsculo
     df.columns = [str(c).strip().upper() for c in df.columns]
     
-    # Verifica se as colunas essenciais existem antes de processar
+    # 2. Tratamento da DATA
     if COL_DATA in df.columns:
         df[COL_DATA] = pd.to_datetime(df[COL_DATA], dayfirst=True, errors="coerce").dt.normalize()
     
-    if COL_VALOR in df.columns:
-        df[COL_VALOR] = df[COL_VALOR].apply(valor_brasileiro)
+    # 3. Tratamento do VALOR (Garante que a coluna exista para não dar KeyError)
+    if COL_VALOR not in df.columns:
+        # Tenta encontrar colunas similares como "VALOR_1", "TOTAL", etc, se o gspread renomeou
+        alternativas = [c for c in df.columns if "VALOR" in c]
+        if alternativas:
+            df[COL_VALOR] = df[alternativas[0]].apply(valor_brasileiro)
+        else:
+            df[COL_VALOR] = 0.0 # Cria zerada se não existir nada
     else:
-        # Se a coluna VALOR não for encontrada, cria uma zerada para não dar erro no sum()
-        df[COL_VALOR] = 0.0
+        df[COL_VALOR] = df[COL_VALOR].apply(valor_brasileiro)
         
     return df
 
